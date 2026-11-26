@@ -2,7 +2,7 @@ import { cp, mkdir, readFile, writeFile } from 'node:fs/promises';
 
 const root = new URL('../', import.meta.url);
 const path = name => new URL(name, root);
-const publicFiles = ['index.html', 'style.css', 'app.js', 'data.js', 'map.js', 'assets/cat.jpg', 'assets/bird.jpg', 'assets/dog.jpg'];
+const publicFiles = ['index.html', 'style.css', 'app.js', 'data.js', 'map.js', 'assets/cat.jpg', 'assets/bird.jpg', 'assets/dog.jpg', 'assets/CUHKSZ_map.jpg', 'vendor/maplibre-gl.js', 'vendor/maplibre-gl.css'];
 const assets = Object.fromEntries(await Promise.all(publicFiles.map(async name => {
   const bytes = await readFile(path('public/' + name));
   return [name, bytes.toString('base64')];

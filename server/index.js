@@ -11,6 +11,9 @@ const assets = new Map([
   ['/assets/cat.jpg', ['assets/cat.jpg', 'image/jpeg']],
   ['/assets/bird.jpg', ['assets/bird.jpg', 'image/jpeg']],
   ['/assets/dog.jpg', ['assets/dog.jpg', 'image/jpeg']],
+  ['/assets/CUHKSZ_map.jpg', ['assets/CUHKSZ_map.jpg', 'image/jpeg']],
+  ['/vendor/maplibre-gl.js', ['vendor/maplibre-gl.js', 'text/javascript; charset=utf-8']],
+  ['/vendor/maplibre-gl.css', ['vendor/maplibre-gl.css', 'text/css; charset=utf-8']],
 ]);
 
 class RequestError extends Error {
@@ -126,7 +129,8 @@ async function record(request, env, incident = false) {
     );
     if (!validFormat) throw new RequestError(400, '请提交与记录方式相符的文字或媒体。');
   }
-  if (!/^[a-f0-9-]{36}$/.test(id) || !areas.some(item => item.id === area) || !(incident ? kinds.slice(1).includes(kind) : kind === kinds[0])) {
+  const customArea = typeof area === 'string' && area.startsWith('custom:') && area.length > 7;
+  if (!/^[a-f0-9-]{36}$/.test(id) || !(customArea || areas.some(item => item.id === area)) || !(incident ? kinds.slice(1).includes(kind) : kind === kinds[0])) {
     throw new RequestError(400, '请选择校园区域和观察类型。');
   }
   if (typeof input.observedAt !== 'string' || !Number.isFinite(+observed) || +observed > Date.now() + 300_000) throw new RequestError(400, '请检查观察时间。');

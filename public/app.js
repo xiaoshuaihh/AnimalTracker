@@ -1,5 +1,5 @@
-import { areas, categories, kinds, samples, sampleVisits, eventRoles, achievementsFor } from './data.js';
-import { paintMap } from './map.js';
+import { regions, areas, legacyAreaIds, categories, kinds, samples, sampleVisits, eventRoles, achievementsFor } from './data.js';
+import { createMap, renderSightings, destroyMap } from './map.js';
 
 const paths = {
   paw: '<ellipse cx="6.5" cy="9" rx="2" ry="2.7" transform="rotate(-24 6.5 9)"/><ellipse cx="10" cy="5.8" rx="1.7" ry="2.5"/><ellipse cx="14" cy="5.8" rx="1.7" ry="2.5"/><ellipse cx="17.5" cy="9" rx="2" ry="2.7" transform="rotate(24 17.5 9)"/><path d="M12 11c-2 0-3 2-4.5 3.1C4.1 16.5 6.7 20 9.4 19c1.7-.7 3.5-.7 5.2 0 2.7 1 5.3-2.5 1.9-4.9C15 13 14 11 12 11Z"/>',
@@ -16,6 +16,8 @@ const paths = {
   video: '<rect x="3" y="6" width="12" height="12" rx="2"/><path d="m15 10 6-3v10l-6-3"/>',
   mic: '<rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 11v1a7 7 0 0 0 14 0v-1m-7 8v3"/>',
   text: '<path d="M4 6h16M12 6v13m-3 0h6"/>',
+  window: '<rect x="4" y="5" width="16" height="14" rx="2"/><path d="M4 10h16"/>',
+  expand: '<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>',
   settings: '<path d="M4 6h16M4 12h16M4 18h16M8 4v4m8 2v4m-5 2v4"/>',
   person: '<circle cx="12" cy="8" r="3"/><path d="M5 20c0-4 3-6 7-6s7 2 7 6"/>',
   clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
@@ -39,17 +41,29 @@ const toast = document.querySelector('#announcement');
 const animalIcons = { 猫: 'cat', 狗: 'dog', 鸟类: 'bird', 蛇: 'snake' };
 const state = {
   animals: [...samples], visits: [...sampleVisits], bookmarks: [], signedIn: false, ai: false,
-  area: '', filter: '', species: '', zoom: 1, allVisits: false, loadError: '',
+  area: '', filter: '', species: '', mapFloating: false, mapPos: null, allVisits: false, loadError: '',
   events: null, eventError: '', eventLoading: false,
   me: undefined, meError: '', person: null, personError: '', fundraisers: [],
   permissions: {}, onboarding: false,
 };
+let exploreMap = null;
+let profileMap = null;
 let formState = null;
 let toastTimer;
 const esc = text => String(text ?? '').replace(/[&<>"']/g, char => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' })[char]);
 const options = values => values.map(([value, name]) => `<option value="${esc(value)}">${esc(name)}</option>`).join('');
 const findAnimal = id => state.animals.find(animal => animal.id === id);
-const findArea = id => areas.find(area => area.id === id);
+// 解析任意地点记录：预置小类、自定义地点（custom: 前缀）或旧版 id。
+const areaInfo = id => {
+  if (!id) return { id: '', name: '未记录地点', x: null, y: null, region: null };
+  if (id.startsWith('custom:')) return { id, name: id.slice(7).trim(), x: null, y: null, region: 'other', custom: true };
+  const spot = areas.find(item => item.id === id) || areas.find(item => item.id === legacyAreaIds[id]);
+  return spot ? { ...spot } : { id, name: id, x: null, y: null, region: null };
+};
+const findArea = id => areaInfo(id);
+// 用于按小类过滤记录：旧 id 归一到新小类，自定义地点返回 null（不参与地图过滤）。
+const areaKey = id => id.startsWith('custom:') ? null : (legacyAreaIds[id] || id);
+const regionOf = id => regions.find(region => region.id === id);
 const sightingSpecies = visit => findAnimal(visit.animal_id)?.species || visit.species;
 const isEvent = visit => visit.kind !== kinds[0];
 const categoryIcon = name => Object.hasOwn(animalIcons, name) ? animalIcons[name] : 'paw';
@@ -130,24 +144,38 @@ function visitAttachment(visit, title) {
 }
 
 function mapView(visits, { profile = false } = {}) {
-  return `<div class="map-frame" aria-label="动物目击区域示意图">
-    <div class="map-layer" style="--zoom:${profile ? 1 : state.zoom}"><canvas aria-hidden="true"></canvas>
-    ${areas.map(area => {
-      const records = visits.filter(visit => visit.area === area.id);
-      if (!records.length) return '';
-      const formats = [...new Set(records.map(visitFormat))];
-      const types = formats.map(format => formatInfo[format][0]).join('、');
-      const selected = !profile && state.area === area.id;
-      const action = profile ? 'profile-point' : 'area';
-      return `<button class="map-pin" data-action="${action}" data-value="${area.id}"
-        data-visit="${esc(records[0].id)}" aria-label="${selected ? area.name + '，' : ''}${records.length} 条目击记录：${types}"
-        aria-pressed="${selected}" style="--x:${area.x}%;--y:${area.y}%">
-        <span class="pin-formats">${formats.map(format => formatMark(format, true)).join('')}</span>
-        ${selected ? `<small>${area.name}</small>` : ''}
-      </button>`;
-    }).join('')}</div>
-    ${profile ? '' : '<div class="zoom"><button data-action="zoom-in" aria-label="放大地图">+</button><button data-action="zoom-out" aria-label="缩小地图">−</button></div>'}
+  const floating = !profile && state.mapFloating;
+  const position = floating && state.mapPos ? `left:${state.mapPos.x}px;top:${state.mapPos.y}px` : '';
+  const handle = floating ? `<div class="float-handle" data-action="map-drag"><span class="grip" aria-hidden="true">⠿</span>
+    <strong>校园足迹地图</strong><span class="float-hint">拖动移动</span>
+    <button type="button" class="text-button float-restore" data-action="map-toggle" aria-label="还原完整地图">${icon('expand')}还原</button></div>` : '';
+  const zoomButtons = `<div class="zoom"><button data-action="zoom-in" aria-label="放大地图">+</button><button data-action="zoom-out" aria-label="缩小地图">−</button></div>`;
+  const tools = profile ? '' : `<div class="map-tools">${floating ? '' : zoomButtons}
+    ${floating ? '' : `<button type="button" class="map-tool-button" data-action="map-toggle" aria-label="缩成小窗" title="缩成小窗">${icon('window')}</button>`}
   </div>`;
+  return `<div class="map-frame${floating ? ' floating' : ''}" style="${position}" aria-label="校园足迹地图">
+    ${handle}
+    <div class="map-slot"><div class="map-host" data-map="${profile ? 'profile' : 'explore'}"></div></div>
+    ${tools}
+    ${profile || floating ? '' : '<div class="map-caption"><span>底图：OpenFreeMap · © OpenStreetMap</span><span>标记为大致位置</span></div>'}
+  </div>`;
+}
+
+function pinElement(spot, records, selected, profile) {
+  const formats = [...new Set(records.map(visitFormat))];
+  const types = formats.map(format => formatInfo[format][0]).join('、');
+  const element = document.createElement('button');
+  element.type = 'button';
+  element.className = 'map-pin';
+  element.dataset.action = profile ? 'profile-point' : 'area';
+  element.dataset.value = spot.id;
+  element.dataset.visit = records[0].id;
+  element.setAttribute('aria-pressed', String(selected));
+  element.setAttribute('aria-label', `${selected ? spot.name + '，' : ''}${records.length} 条目击记录：${types}`);
+  const region = regionOf(spot.region);
+  element.innerHTML = `<span class="pin-formats" style="--pc:${region?.color || '#56765d'}">${formats.map(format => formatMark(format, true)).join('')}</span>
+    ${selected ? `<small>${esc(spot.name)}</small>` : ''}`;
+  return element;
 }
 
 function trackPoints(visits) {
@@ -156,7 +184,7 @@ function trackPoints(visits) {
     if (!visit.animal_id) continue;
     const points = individuals.get(visit.animal_id) ?? [];
     const area = findArea(visit.area);
-    if (area && points.at(-1)?.id !== area.id) points.push(area);
+    if (area?.lng != null && points.at(-1)?.id !== area.id) points.push(area);
     individuals.set(visit.animal_id, points);
   }
   return [...individuals.values()].filter(points => points.length > 1);
@@ -198,11 +226,11 @@ function feedRow(visit) {
 
 function explore() {
   const filtered = filteredVisits();
-  const visible = filtered.filter(visit => !state.area || visit.area === state.area);
+  const visible = filtered.filter(visit => !state.area || areaKey(visit.area) === state.area);
   const displayed = state.allVisits ? visible : visible.slice(0, 3);
   const species = speciesFor(state.filter);
   const chips = [['','全部','filter'], ...categoryNames().map(name => [name,name,categoryIcon(name)])];
-  const mapHint = state.species ? '虚线连接同一个体按时间排列的目击点。' : '点击标记查看地点和记录。';
+  const mapHint = state.species ? '虚线连接同一个体按时间排列的目击点。' : '点击标记查看地点和记录，地图可缩放、拖动。';
   return `<section class="hero hero-simple">
     <div class="hero-copy">
       <h1>神奇动物在哪里</h1>
@@ -218,15 +246,16 @@ function explore() {
       <div class="species-filter"><label for="map-species">物种</label><select id="map-species">
         <option value="">全部物种</option>${species.map(name => `<option value="${esc(name)}"${state.species === name ? ' selected' : ''}>${esc(name)}</option>`).join('')}
       </select></div>
-      ${mapView(filtered)}
+      ${state.mapFloating ? `<div class="map-placeholder"><span class="placeholder-icon">${icon('map')}</span><span>地图已缩为小窗，拖动小窗标题栏可以移动位置。</span><button class="text-button" data-action="map-toggle">${icon('expand')}还原完整地图</button></div>` : mapView(filtered)}
       ${filtered.length ? '' : '<p class="empty map-empty">当前筛选暂无目击点。</p>'}
     </section>
     <section class="panel">
-      <div class="panel-header feed-heading"><div><h2>${state.area ? esc(findArea(state.area)?.name) : '最新观察'}</h2><p>${state.area ? visible.length + ' 条区域记录' : '按观察时间排序'}</p></div>${state.area ? '<button class="text-button" data-action="area" data-value="">清除地点</button>' : icon('clock')}</div>
+      <div class="panel-header feed-heading"><div><h2>${state.area ? esc(findArea(state.area).name) : '最新观察'}</h2><p>${state.area ? visible.length + ' 条区域记录' : '按观察时间排序'}</p></div>${state.area ? '<button class="text-button" data-action="area" data-value="">清除地点</button>' : icon('clock')}</div>
       <div class="feed-list" aria-live="polite">${displayed.length ? displayed.map(feedRow).join('') : '<p class="empty">这个范围内暂无观察。</p>'}</div>
       ${visible.length > 3 ? `<div class="feed-footer"><button class="text-button" data-action="more">${state.allVisits ? '收起观察记录' : '查看全部观察'}</button></div>` : ''}
     </section>
-  </div>`;
+  </div>
+  ${state.mapFloating ? mapView(filtered) : ''}`;
 }
 
 function animalsPage() {
@@ -608,8 +637,23 @@ function render() {
     else tab.removeAttribute('aria-current');
   }
   const search = document.querySelector('#animal-search')?.value ?? '';
+  // 探索页地图容器跨渲染保留，避免反复重建地图引擎。
+  const preserved = main.querySelector('.map-host[data-map=explore]');
   main.innerHTML = active === 'animals' ? animalsPage() : active === 'collection' ? collection() : active === 'events' ? eventsPage() : active === 'settings' ? settingsPage() : active === 'person' ? personPage() : explore();
-  for (const canvas of main.querySelectorAll('canvas')) paintMap(canvas, state.species ? trackPoints(filteredVisits()) : []);
+  if (preserved) {
+    const slot = main.querySelector('.map-slot');
+    if (slot) slot.replaceChildren(preserved);
+  }
+  const host = main.querySelector('.map-host[data-map=explore]');
+  if (host) {
+    exploreMap = createMap(host, exploreMap);
+    exploreMap?.resize?.();
+    renderSightings(exploreMap, filteredVisits(), {
+      selectedArea: state.area,
+      tracks: state.species ? trackPoints(filteredVisits()) : [],
+      pinBuilder: pinElement,
+    });
+  }
   const searchBox = document.querySelector('#animal-search');
   if (searchBox && search) {
     searchBox.value = search;
@@ -657,8 +701,12 @@ function showAnimal(animal) {
       <button class="text-button" data-action="visit" data-value="${esc(visit.id)}">${esc(findArea(visit.area)?.name)} · ${formatDate(visit.observed_at)}</button>
       ${formatMark(visitFormat(visit), true)} <span>${esc(isEvent(visit) ? visit.kind : visit.note || '日常观察')}${visit.demo ? '（示例）' : ''}</span>
     </li>`).join('')}</ul>`, animal.demo ? '示例档案' : '动物档案');
-  const canvas = modal.querySelector('canvas');
-  if (canvas) paintMap(canvas, tracks);
+  const host = modal.querySelector('.map-host[data-map=profile]');
+  if (host) {
+    if (profileMap) { destroyMap(profileMap); profileMap = null; }
+    profileMap = createMap(host);
+    renderSightings(profileMap, normal, { profile: true, tracks, pinBuilder: pinElement });
+  }
 }
 
 function showVisit(visit) {
@@ -738,11 +786,13 @@ function showRecord(preselected, mode = 'observation') {
       ${incident ? `<label class="field"><span>事件类型</span><select name="kind">${options(kinds.slice(1).map(kind => [kind,kind === '车辆碰撞' ? '车辆碰撞（如猫被车撞）' : kind]))}</select></label>` : ''}
       <label class="field"><span>观察时间</span><input type="datetime-local" name="observedAt" value="${localDateInput()}" required></label>
     </div>
-    <div>
-      <label class="field"><span>校园区域</span><select name="area" required>${options([['','请选择区域'],...areas.map(area => [area.id,area.name])])}</select></label>
-      <div class="upload-actions">${button('使用当前位置','target','locate')}</div>
-      <p id="location-status" class="hint" role="status">浏览器会请求定位授权，记录中仅保存你确认的区域。</p>
+    <div class="field-pair">
+      <label class="field"><span>校园区域</span><select name="region" required>${options([['','请选择区域'],...regions.map(region => [region.id,region.name])])}</select></label>
+      <label class="field"><span>具体地点</span><select name="area" required>${options([['','请选择地点'],...(regionOf('upper')?.spots || []).map(spot => [spot.id,spot.name])])}</select></label>
     </div>
+    <label class="field" id="custom-area" hidden><span>自行填写地点</span><input name="customArea" maxlength="20" placeholder="例如：上园健身房"></label>
+    <div class="upload-actions">${button('使用当前位置','target','locate')}</div>
+    <p id="location-status" class="hint" role="status">浏览器会请求定位授权，记录中仅保存你确认的区域。选择「其它地点」可自行填写。</p>
     `}
     <div class="field-pair">
       <label class="field"><span>动物类别</span><select name="category" ${create ? 'required' : ''}>${options([[create ? '' : '待确认',create ? '请选择类别' : '待确认'], ...categoryNames().filter(name => name !== '待确认').map(category => [category,category]),['__custom','新增类别…']])}</select></label>
@@ -771,7 +821,15 @@ function showRecord(preselected, mode = 'observation') {
   </form>`, create ? '先建立档案，之后可为这只动物补充目击记录。' : '');
 
   const form = document.querySelector('#record-form');
-  if (state.area && form.elements.area) form.elements.area.value = state.area;
+  if (state.area && form.elements.area) {
+    const spot = findArea(state.area);
+    if (spot.region && spot.id && !spot.custom) {
+      form.elements.region.value = spot.region;
+      updateArea(form);
+      form.elements.area.value = spot.id;
+      updateAreaCustom(form);
+    }
+  }
   if (selected) {
     form.elements.matchMode.value = 'existing';
     form.elements.animalId.value = selected.id;
@@ -796,6 +854,19 @@ function updateCategory(form) {
   form.querySelector('#custom-category').hidden = !custom;
   form.elements.customCategory.required = custom;
   form.querySelector('#species-options').innerHTML = options(speciesFor(custom ? form.elements.customCategory.value : form.elements.category.value).map(name => [name,name]));
+}
+
+function updateArea(form) {
+  const region = regionOf(form.elements.region.value);
+  form.elements.area.innerHTML = options([['','请选择地点'], ...(region?.spots || []).map(spot => [spot.id, spot.name])]);
+  updateAreaCustom(form);
+}
+
+function updateAreaCustom(form) {
+  const spot = form.elements.area.value ? areas.find(item => item.id === form.elements.area.value) : null;
+  const custom = !!spot?.custom;
+  form.querySelector('#custom-area').hidden = !custom;
+  form.elements.customArea.required = custom;
 }
 
 async function preparePhoto(file, limit = 1200) {
@@ -900,11 +971,13 @@ async function runIdentification(form) {
   }
 }
 
-const locationHints = [
-  ['library', 22.69254, 114.20921, 140],
-  ['teaching', 22.69000, 114.20806, 150],
-  ['college', 22.69356, 114.20565, 230],
-];
+const haversine = (lat1, lon1, lat2, lon2) => {
+  const rad = Math.PI / 180;
+  const dLat = (lat2 - lat1) * rad;
+  const dLon = (lon2 - lon1) * rad;
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * rad) * Math.cos(lat2 * rad) * Math.sin(dLon / 2) ** 2;
+  return 6371000 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+};
 
 function locate(form, trigger) {
   const status = form.querySelector('#location-status');
@@ -917,13 +990,18 @@ function locate(form, trigger) {
   navigator.geolocation.getCurrentPosition(({coords}) => {
     if (!form.isConnected) return;
     trigger.disabled = false;
-    const ranked = locationHints.map(([id, lat, lon, radius]) => ({
-      id, radius, distance: Math.hypot((coords.latitude - lat) * 111_195, (coords.longitude - lon) * 102_700),
-    })).sort((a,b) => a.distance - b.distance);
+    const ranked = areas.filter(spot => spot.lng != null).map(spot => ({
+      spot,
+      distance: haversine(coords.latitude, coords.longitude, spot.lat, spot.lng),
+    })).sort((a, b) => a.distance - b.distance);
     const best = ranked[0];
-    if (best.distance <= best.radius && coords.accuracy <= 160) {
-      form.elements.area.value = best.id;
-      status.textContent = '已建议「' + findArea(best.id).name + '」，请核对或手动修改。';
+    if (best && best.distance <= 420 && coords.accuracy <= 160) {
+      const spot = best.spot;
+      form.elements.region.value = spot.region;
+      updateArea(form);
+      form.elements.area.value = spot.id;
+      updateAreaCustom(form);
+      status.textContent = '已建议「' + spot.name + '」，请核对或手动修改。';
     } else {
       status.textContent = '已获取设备位置，无法可靠匹配校园区域。请手动选择。';
     }
@@ -1097,6 +1175,10 @@ async function saveObservation(form) {
   if (fields.category === '__custom' && !category) return formError(form, '请填写新的类别名称。');
   if (fields.format === 'photo' && !session.photo) return formError(form,'请添加一张照片。');
   if (['video','audio'].includes(fields.format) && !session.file) return formError(form,'请先上传文件或完成录制。');
+  const chosen = findArea(fields.area);
+  const customName = chosen.custom ? (fields.customArea || '').trim() : '';
+  if (chosen.custom && !customName) return formError(form, '请填写具体地点。');
+  const area = chosen.custom ? 'custom:' + customName : fields.area;
   const match = fields.matchMode === 'existing' ? fields.animalId : fields.matchMode;
   if (match === 'new' && category === '待确认') return formError(form, '请先确认新动物的类别，或选择暂不确定个体。');
   const submit = form.querySelector('[type=submit]');
@@ -1106,7 +1188,7 @@ async function saveObservation(form) {
     const incident = form.dataset.mode === 'incident';
     const create = form.dataset.mode === 'animal';
     const record = {
-      id:session.id, area:fields.area, kind:incident ? fields.kind : kinds[0], category, species:fields.species, features:fields.features,
+      id:session.id, area, kind:incident ? fields.kind : kinds[0], category, species:fields.species, features:fields.features,
       match, name:fields.name, note:fields.note, photo:session.photo, photoConsent:!!fields.photoConsent,
       observedAt:fields.observedAt ? new Date(fields.observedAt).toISOString() : undefined,
       eventConsent:!!fields.eventConsent, personality:fields.personality, likes:fields.likes,
@@ -1128,7 +1210,7 @@ async function saveObservation(form) {
       if (!modal.open) showAnimal(findAnimal(id));
       notify('动物档案已建立。');
     } else {
-      state.area = fields.area;
+      state.area = chosen.custom ? '' : fields.area;
       state.filter = '';
       state.species = '';
       state.allVisits = false;
@@ -1175,6 +1257,28 @@ async function toggleBookmark(id, trigger) {
   }
 }
 
+// —— 地图交互：小窗悬浮（缩放与平移由 MapLibre 原生处理） ——
+
+function toggleFloatingMap() {
+  state.mapFloating = !state.mapFloating;
+  if (state.mapFloating) state.mapPos = null;
+  render();
+  exploreMap?.resize?.();
+  if (state.mapFloating) placeFloatingMap();
+}
+
+function placeFloatingMap() {
+  const frame = main.querySelector('.map-frame.floating');
+  if (!frame) return;
+  const rect = frame.getBoundingClientRect();
+  state.mapPos = {
+    x: Math.max(12, Math.min(window.innerWidth - rect.width - 12, window.innerWidth - rect.width - 40)),
+    y: Math.max(80, Math.min(window.innerHeight - rect.height - 12, window.innerHeight - rect.height - 40)),
+  };
+  frame.style.left = state.mapPos.x + 'px';
+  frame.style.top = state.mapPos.y + 'px';
+}
+
 document.querySelectorAll('[data-icon]').forEach(el => { el.innerHTML = icon(el.dataset.icon); });
 document.addEventListener('click', event => {
   const trigger = event.target.closest('[data-action]');
@@ -1199,11 +1303,9 @@ document.addEventListener('click', event => {
     case 'area': state.area = state.area === value ? '' : value; state.allVisits = false; render(); break;
     case 'more': state.allVisits = !state.allVisits; render(); break;
     case 'refresh': refresh(); break;
-    case 'zoom-in':
-    case 'zoom-out':
-      state.zoom = Math.min(1.25, Math.max(1, state.zoom + (action === 'zoom-in' ? .125 : -.125)));
-      main.querySelector('.map-layer')?.style.setProperty('--zoom', state.zoom);
-      break;
+    case 'zoom-in': exploreMap?.zoomIn(); break;
+    case 'zoom-out': exploreMap?.zoomOut(); break;
+    case 'map-toggle': toggleFloatingMap(); break;
     case 'animal': showAnimal(findAnimal(value)); break;
     case 'visit': showVisit(state.visits.find(visit => visit.id === value)); break;
     case 'edit': showEdit(findAnimal(value)); break;
@@ -1240,6 +1342,8 @@ document.addEventListener('change', event => {
   if (field.type === 'file') { setPhoto(form, field.files[0]); field.value = ''; }
   if (field.name === 'matchMode') { formState.autoChoice = true; updateMatch(form); }
   if (field.name === 'category' || field.name === 'customCategory') updateCategory(form);
+  if (field.name === 'region') updateArea(form);
+  if (field.name === 'area') updateAreaCustom(form);
   if (field.name === 'kind' && form.dataset.mode === 'incident') {
     if (field.value === '鸟撞' && form.elements.category.value === '待确认') form.elements.category.value = '鸟类';
     if (field.value !== '鸟撞' && form.elements.category.value === '鸟类') form.elements.category.value = '待确认';
@@ -1253,6 +1357,50 @@ document.addEventListener('change', event => {
     }
   }
 });
+// 拖动小窗标题栏移动悬浮地图。
+document.addEventListener('pointerdown', event => {
+  const handle = event.target.closest('.float-handle');
+  if (!handle || event.target.closest('button')) return;
+  const frame = handle.closest('.map-frame');
+  const startX = event.clientX;
+  const startY = event.clientY;
+  const originX = state.mapPos?.x ?? frame.offsetLeft;
+  const originY = state.mapPos?.y ?? frame.offsetTop;
+  handle.classList.add('dragging');
+  const move = moveEvent => {
+    const rect = frame.getBoundingClientRect();
+    state.mapPos = {
+      x: Math.max(4, Math.min(originX + moveEvent.clientX - startX, window.innerWidth - rect.width - 4)),
+      y: Math.max(4, Math.min(originY + moveEvent.clientY - startY, window.innerHeight - rect.height - 4)),
+    };
+    frame.style.left = state.mapPos.x + 'px';
+    frame.style.top = state.mapPos.y + 'px';
+  };
+  const up = () => {
+    handle.classList.remove('dragging');
+    document.removeEventListener('pointermove', move);
+    document.removeEventListener('pointerup', up);
+  };
+  document.addEventListener('pointermove', move);
+  document.addEventListener('pointerup', up);
+  event.preventDefault();
+});
+
+// 窗口尺寸变化时把小窗收回可视范围，并让地图引擎重算尺寸。
+window.addEventListener('resize', () => {
+  exploreMap?.resize?.();
+  if (!state.mapFloating || !state.mapPos) return;
+  const frame = main.querySelector('.map-frame.floating');
+  if (!frame) return;
+  const rect = frame.getBoundingClientRect();
+  state.mapPos = {
+    x: Math.max(4, Math.min(state.mapPos.x, window.innerWidth - rect.width - 4)),
+    y: Math.max(4, Math.min(state.mapPos.y, window.innerHeight - rect.height - 4)),
+  };
+  frame.style.left = state.mapPos.x + 'px';
+  frame.style.top = state.mapPos.y + 'px';
+});
+
 document.addEventListener('submit', event => {
   if (!['record-form','edit-profile','event-application','person-settings'].includes(event.target.id)) return;
   event.preventDefault();
@@ -1262,6 +1410,7 @@ document.addEventListener('submit', event => {
   else saveProfile(event.target);
 });
 modal.addEventListener('close', () => {
+  if (profileMap) { destroyMap(profileMap); profileMap = null; }
   if (!formState) return;
   formState.identification?.abort();
   stopCapture(formState,true);
