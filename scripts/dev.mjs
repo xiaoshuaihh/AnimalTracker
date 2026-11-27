@@ -96,7 +96,8 @@ const port = Number(cliOption('port') || process.env.PORT || 4173);
 const host = cliOption('host') || process.env.WILDLIFE_HOST || '127.0.0.1';
 const server = createServer(async (incoming, outgoing) => {
   try {
-    const origin = 'http://' + (incoming.headers.host || 'localhost:' + port);
+    const scheme = incoming.headers['x-forwarded-proto'] === 'https' ? 'https' : 'http';
+    const origin = scheme + '://' + (incoming.headers.host || 'localhost:' + port);
     const url = new URL(incoming.url, origin);
     const headers = new Headers(incoming.headers);
     headers.delete('oai-authenticated-user-id');
