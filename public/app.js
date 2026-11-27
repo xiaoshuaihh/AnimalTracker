@@ -283,6 +283,7 @@ function home() {
         <option value="">全部物种</option>${species.map(name => `<option value="${esc(name)}"${state.species === name ? ' selected' : ''}>${esc(name)}</option>`).join('')}
       </select></div>
       ${state.mapFloating ? `<div class="map-placeholder"><span class="placeholder-icon">${icon('map')}</span><span>地图已缩为小窗，拖动小窗标题栏可以移动位置。</span><button class="text-button" data-action="map-toggle">${icon('expand')}还原完整地图</button></div>` : mapView(filtered)}
+      ${button('我要记录神奇动物','camera','record','primary home-record')}
       ${filtered.length ? '' : '<p class="empty map-empty">当前筛选暂无目击点。</p>'}
     </section>
     <section class="panel">
