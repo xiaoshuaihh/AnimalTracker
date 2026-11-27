@@ -47,6 +47,7 @@ class Statement {
 const env = {
   EVENT_REVIEWER_EMAILS: process.env.EVENT_REVIEWER_EMAILS,
   EVENT_REVIEWER_USERNAMES: process.env.EVENT_REVIEWER_USERNAMES,
+  EVENT_ADMIN_USERNAMES: process.env.EVENT_ADMIN_USERNAMES,
   CAT_FUNDRAISERS_JSON: process.env.CAT_FUNDRAISERS_JSON,
   DB: {
     prepare: query => new Statement(query),
@@ -87,7 +88,12 @@ const env = {
     },
   },
 };
-const auth = createAuth(env.DB, { adoptLegacyUser: process.env.WILDLIFE_ADOPT_LEGACY_USER, bucket: env.BUCKET });
+const auth = createAuth(env.DB, {
+  adoptLegacyUser: process.env.WILDLIFE_ADOPT_LEGACY_USER,
+  bucket: env.BUCKET,
+  adminUsernames: process.env.EVENT_ADMIN_USERNAMES,
+  reviewerUsernames: process.env.EVENT_REVIEWER_USERNAMES,
+});
 const worker = createHandler(filename => readFile(new URL('public/' + filename, root)));
 function cliOption(name) {
   const index = process.argv.indexOf('--' + name);
@@ -117,10 +123,12 @@ const server = createServer(async (incoming, outgoing) => {
     headers.delete('oai-authenticated-user-id');
     headers.delete('oai-authenticated-user-email');
     headers.delete('oai-authenticated-user-name');
+    headers.delete('oai-authenticated-user-role');
     const viewer = await auth.resolveSession(incoming.headers.cookie || '');
     if (viewer) {
       headers.set('oai-authenticated-user-id', viewer.id);
       headers.set('oai-authenticated-user-name', viewer.username);
+      headers.set('oai-authenticated-user-role', viewer.role || 'user');
     }
     const request = new Request(url, {
       method: incoming.method,

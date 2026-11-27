@@ -44,7 +44,7 @@ const plusMenu = document.querySelector('#plus-menu');
 const plusButton = document.querySelector('[data-action=plus-menu]');
 const animalIcons = { 猫: 'cat', 狗: 'dog', 鸟类: 'bird', 蛇: 'snake' };
 const state = {
-  animals: [...samples], visits: [...sampleVisits], bookmarks: [], signedIn: false, username: '', nickname: '', avatar: '',
+  animals: [...samples], visits: [...sampleVisits], bookmarks: [], signedIn: false, username: '', nickname: '', avatar: '', admin: false, reviewer: false,
   area: '', filter: '', species: '', mapFloating: false, mapPos: null, allVisits: false, loadError: '',
   events: null, eventError: '', eventLoading: false,
   me: undefined, meError: '', person: null, personError: '', fundraisers: [],
@@ -137,7 +137,7 @@ async function refresh() {
     state.loadError = '暂时无法同步校园观察，页面仍可浏览示例记录。';
   }
   if (state.signedIn && state.me === undefined) await loadMe();
-  if (state.signedIn && !state.username) await loadAccount();
+  if (state.signedIn) await loadAccount();
   render();
   if (selectedTab() === 'events') await loadEvents();
   if (selectedTab() === 'mine') queryPermissionStates();
@@ -367,12 +367,20 @@ function minePage() {
   const permissions = `<section class="panel mine-panel">
     <div class="panel-header"><div><h2>设备权限</h2><p>可以按需授权，浏览器会显示相应的权限请求。</p></div></div>
     ${permissionCards()}</section>`;
-  // 管理员模式：为管理员预留的隐藏入口，当前版本不显示。
-  // 后续可在此渲染 <section class="panel mine-panel"><div class="panel-header"><div><h2>管理员模式</h2><p>审核与数据管理。</p></div></div></section>
+  const admin = state.admin ? `<h2 class="mine-group-title">管理员模式</h2>
+  <section class="panel mine-panel">
+    <div class="panel-header"><div><h2>管理员模式</h2><p>内容管理与审核员管理。</p></div></div>
+    <div class="admin-actions">
+      ${button('审核权限申请','book','admin-review')}
+      ${button('事件管理','event','admin-events')}
+      ${button('审核员管理','person','admin-reviewers')}
+    </div>
+  </section>` : '';
   return `<section class="page-title"><h1>我的</h1></section>
   ${account}
   <h2 class="mine-group-title">我的图鉴</h2>${collection}
-  <h2 class="mine-group-title">设备权限</h2>${permissions}`;
+  <h2 class="mine-group-title">设备权限</h2>${permissions}
+  ${admin}`;
 }
 
 const statusLabels = { pending: '待审核', approved: '已通过', rejected: '未通过', revoked: '已撤销' };
@@ -390,7 +398,7 @@ function eventsPage() {
   const account = !state.signedIn
     ? '<div class="collection-banner"><strong>登录后记录及查看你提交的事件</strong>' + button('登录','person','login','primary') + '</div>'
     : `<div class="section-header">
-      <div><h2>${data?.canViewAll ? '已授权的事件记录' : '我的事件记录'}</h2>
+      <div><h2>${data?.admin ? '全部事件记录（管理员）' : data?.canViewAll ? '已授权的事件记录' : '我的事件记录'}</h2>
       ${application ? `<p>查看权限 · ${statusLabels[application.status]} · ${esc(eventRoles[application.role])}</p>` : ''}</div>
       <div class="event-actions">
         ${data && (!application || ['rejected','revoked'].includes(application.status)) ? button('申请查看权限','lock','event-apply') : ''}
@@ -484,6 +492,75 @@ async function decideApplication(decision, id, trigger) {
     await api('events/review', {decision, id});
     if (trigger.isConnected) await showEventReview();
     notify('审核结果已保存。');
+  } catch (error) {
+    notify(error.message);
+  } finally {
+    trigger.disabled = false;
+  }
+}
+
+async function showAdminReviewers() {
+  showDialog('审核员管理', '<p class="empty" role="status">正在加载用户…</p>');
+  const opening = modal.querySelector('.empty');
+  try {
+    const { users } = await api('admin/reviewers');
+    if (!modal.open || !opening.isConnected) return;
+    showDialog('审核员管理', users.length ? `<div class="review-list">${users.map(user => {
+      const label = user.role === 'admin' ? '管理员' : user.role === 'reviewer' ? '审核员' : '普通用户';
+      return `<article>
+        <strong>${esc(user.nickname || user.username)}</strong>
+        <p>${esc(user.username)} · ${label} · ${formatDate(user.created_at)} 注册</p>
+        ${user.role === 'admin' ? '<p class="hint">管理员由服务器配置指定，不可在此修改。</p>' : user.role === 'reviewer' ?
+          button('取消审核员','close','admin-role','outline',user.username + '|user') :
+          button('设为审核员','star','admin-role','primary',user.username + '|reviewer')}
+      </article>`;
+    }).join('')}</div>` : '<p class="empty">暂无用户。</p>');
+  } catch (error) {
+    if (modal.open && opening.isConnected) opening.textContent = error.message;
+  }
+}
+
+async function setUserRole(value, trigger) {
+  const [username, role] = value.split('|');
+  trigger.disabled = true;
+  try {
+    await api('admin/reviewers', { username, role });
+    if (trigger.isConnected) await showAdminReviewers();
+    notify(role === 'reviewer' ? '已设为审核员。' : '已取消审核员。');
+  } catch (error) {
+    notify(error.message);
+  } finally {
+    trigger.disabled = false;
+  }
+}
+
+async function showAdminEvents() {
+  showDialog('事件管理', '<p class="empty" role="status">正在加载事件…</p>');
+  const opening = modal.querySelector('.empty');
+  try {
+    const { events } = await api('admin/events');
+    if (!modal.open || !opening.isConnected) return;
+    showDialog('事件管理', events.length ? `<div class="review-list">${events.map(event => `<article>
+      <strong>${esc(event.kind)}</strong>
+      <p>${esc(event.category)} · ${esc(findArea(event.area)?.name)} · ${formatDate(event.observed_at)}</p>
+      <p class="hint">${esc(event.author || '未知提交者')}</p>
+      <div class="event-actions">
+        ${button('查看','book','event-visit','outline',event.id)}
+        ${button('删除记录','close','admin-remove-event','outline',event.id)}
+      </div>
+    </article>`).join('')}</div>` : '<p class="empty">暂无事件记录。</p>', '删除操作不可恢复，请确认内容确实不当。');
+  } catch (error) {
+    if (modal.open && opening.isConnected) opening.textContent = error.message;
+  }
+}
+
+async function removeAdminEvent(id, trigger) {
+  if (!window.confirm('确定删除这条事件记录？该操作不可恢复。')) return;
+  trigger.disabled = true;
+  try {
+    await api('admin/events', { id });
+    if (trigger.isConnected) await showAdminEvents();
+    notify('事件记录已删除。');
   } catch (error) {
     notify(error.message);
   } finally {
@@ -606,6 +683,8 @@ async function loadAccount() {
     state.username = data.username || '';
     state.nickname = data.nickname || '';
     state.avatar = data.avatar || '';
+    state.admin = data.admin === true;
+    state.reviewer = data.reviewer === true;
   } catch {
     state.username = '';
   }
@@ -806,6 +885,8 @@ async function logout() {
   state.username = '';
   state.nickname = '';
   state.avatar = '';
+  state.admin = false;
+  state.reviewer = false;
   state.me = undefined;
   state.bookmarks = [];
   state.events = null;
@@ -1466,6 +1547,11 @@ document.addEventListener('click', event => {
     case 'change-avatar': showAvatarDialog(); break;
     case 'collection-expand': state.collectionExpanded = !state.collectionExpanded; render(); break;
     case 'achievements-expand': state.achievementsExpanded = !state.achievementsExpanded; render(); break;
+    case 'admin-review': showEventReview(); break;
+    case 'admin-events': showAdminEvents(); break;
+    case 'admin-reviewers': showAdminReviewers(); break;
+    case 'admin-remove-event': removeAdminEvent(value, trigger); break;
+    case 'admin-role': setUserRole(value, trigger); break;
     case 'close': modal.close(); break;
     case 'filter': state.filter = value; state.species = ''; state.area = ''; state.allVisits = false; render(); break;
     case 'new-animal': showRecord('', 'animal'); break;

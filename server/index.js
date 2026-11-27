@@ -240,12 +240,25 @@ async function createAnimal(request, env) {
   return json({ id }, 201);
 }
 
-function canReview(request, env) {
-  const email = request.headers.get('oai-authenticated-user-email')?.trim().toLowerCase();
+function viewerRole(request, env) {
   const username = request.headers.get('oai-authenticated-user-name')?.trim();
-  const allowed = (env.EVENT_REVIEWER_EMAILS || '').split(',').map(item => item.trim().toLowerCase()).filter(Boolean);
+  const admins = (env.EVENT_ADMIN_USERNAMES || '').split(',').map(item => item.trim()).filter(Boolean);
+  if (username && admins.includes(username)) return 'admin';
+  if (request.headers.get('oai-authenticated-user-role')?.trim() === 'admin') return 'admin';
+  const email = request.headers.get('oai-authenticated-user-email')?.trim().toLowerCase();
+  const emails = (env.EVENT_REVIEWER_EMAILS || '').split(',').map(item => item.trim().toLowerCase()).filter(Boolean);
+  if (email && emails.includes(email)) return 'reviewer';
   const reviewers = (env.EVENT_REVIEWER_USERNAMES || '').split(',').map(item => item.trim()).filter(Boolean);
-  return (!!email && allowed.includes(email)) || (!!username && reviewers.includes(username));
+  if (request.headers.get('oai-authenticated-user-role')?.trim() === 'reviewer' || (username && reviewers.includes(username))) return 'reviewer';
+  return 'user';
+}
+
+function canReview(request, env) {
+  return viewerRole(request, env) !== 'user';
+}
+
+function isAdmin(request, env) {
+  return viewerRole(request, env) === 'admin';
 }
 
 async function currentApplication(env, viewer) {
@@ -257,19 +270,20 @@ async function listEvents(request, env) {
   const viewer = requireViewer(request);
   const application = await currentApplication(env, viewer);
   const status = application?.status;
-  const canViewAll = status === 'approved';
+  const admin = isAdmin(request, env);
+  const canViewAll = admin || status === 'approved';
   const { results } = await env.DB.prepare(`SELECT id, category, area, kind, observed_at, (owner = ?) AS mine FROM observations
     WHERE kind <> ? AND (owner = ? OR EXISTS (
       SELECT 1 FROM event_access_requests WHERE account_id = ? AND status = 'approved'
-    )) ORDER BY observed_at DESC, rowid DESC`).bind(viewer, kinds[0], viewer, viewer).all();
-  return json({ events: results, application, canViewAll, canReview: canReview(request, env) });
+    ) OR ? = 1) ORDER BY observed_at DESC, rowid DESC`).bind(viewer, kinds[0], viewer, viewer, Number(admin)).all();
+  return json({ events: results, application, canViewAll, canReview: canReview(request, env), admin });
 }
 
 async function eventDetail(request, env, id) {
   const viewer = requireViewer(request);
   const event = await env.DB.prepare(`SELECT ${visitFields} FROM observations WHERE id = ? AND kind <> ?
-    AND (owner = ? OR EXISTS (SELECT 1 FROM event_access_requests WHERE account_id = ? AND status = 'approved'))`)
-    .bind(id, kinds[0], viewer, viewer).first();
+    AND (owner = ? OR EXISTS (SELECT 1 FROM event_access_requests WHERE account_id = ? AND status = 'approved') OR ? = 1)`)
+    .bind(id, kinds[0], viewer, viewer, Number(isAdmin(request, env))).first();
   if (!event) throw new RequestError(404, '找不到该事件。');
   return json({ event });
 }
@@ -316,6 +330,46 @@ async function reviewEventAccess(request, env) {
   ).run();
   if (!result.meta.changes) throw new RequestError(409, '申请已变更，或这是你自己的申请。请刷新审核列表。');
   return json({ status: next });
+}
+
+async function adminEventList(request, env) {
+  requireViewer(request);
+  if (!isAdmin(request, env)) throw new RequestError(403, '此操作需要管理员身份。');
+  const { results } = await env.DB.prepare(`SELECT o.id, o.kind, o.category, o.area, o.observed_at,
+    COALESCE(NULLIF(u.nickname, ''), u.username) AS author
+    FROM observations o LEFT JOIN users u ON u.id = o.owner
+    WHERE o.kind <> ? ORDER BY o.observed_at DESC, o.rowid DESC`).bind(kinds[0]).all();
+  return json({ events: results });
+}
+
+async function removeEvent(request, env) {
+  requireViewer(request);
+  if (!isAdmin(request, env)) throw new RequestError(403, '此操作需要管理员身份。');
+  const input = await payload(request);
+  const id = field(input.id, 45);
+  const event = await env.DB.prepare(`SELECT ${visitFields} FROM observations WHERE id = ? AND kind <> ?`).bind(id, kinds[0]).first();
+  if (!event) throw new RequestError(404, '找不到该事件。');
+  await env.DB.prepare('DELETE FROM observations WHERE id = ?').bind(id).run();
+  if (event.photo) await env.BUCKET.delete(event.photo.slice(7));
+  if (event.media) await env.BUCKET.delete(event.media.slice(7));
+  return json({ id });
+}
+
+async function adminReviewers(request, env) {
+  requireViewer(request);
+  if (!isAdmin(request, env)) throw new RequestError(403, '此操作需要管理员身份。');
+  if (request.method === 'GET') {
+    const { results } = await env.DB.prepare('SELECT id, username, nickname, role, created_at FROM users ORDER BY created_at DESC LIMIT 500').all();
+    return json({ users: results });
+  }
+  const input = await payload(request);
+  const username = field(input.username).toLowerCase();
+  const role = field(input.role);
+  if (!['user','reviewer'].includes(role)) throw new RequestError(400, '请选择有效的角色。');
+  if (username === request.headers.get('oai-authenticated-user-name')?.trim()) throw new RequestError(409, '不能修改自己的角色。');
+  const result = await env.DB.prepare('UPDATE users SET role = ? WHERE username = ?').bind(role, username).run();
+  if (!result.meta.changes) throw new RequestError(404, '找不到该用户。');
+  return json({ username, role });
 }
 
 const mediaLimit = 25 * 1024 * 1024;
@@ -450,7 +504,7 @@ async function readMedia(request, env, path) {
   const incident = await env.DB.prepare('SELECT owner FROM observations WHERE photo = ? AND kind <> ?').bind(path, kinds[0]).first();
   let contentType = 'image/jpeg';
   if (incident) {
-    if (!viewer || (incident.owner !== viewer && (await currentApplication(env, viewer))?.status !== 'approved')) {
+    if (!viewer || (incident.owner !== viewer && (await currentApplication(env, viewer))?.status !== 'approved' && !isAdmin(request, env))) {
       throw new RequestError(404, '找不到文件。');
     }
   } else {
@@ -500,6 +554,8 @@ export function createHandler(readAsset) {
           if (pathname === '/api/events') return await listEvents(request, env);
           if (pathname === '/api/events/review') return await reviewEventAccess(request, env);
           if (/^\/api\/events\/[a-f0-9-]{36}$/.test(pathname)) return await eventDetail(request, env, pathname.slice(12));
+          if (pathname === '/api/admin/events') return await adminEventList(request, env);
+          if (pathname === '/api/admin/reviewers') return await adminReviewers(request, env);
           if (pathname === '/api/me') return await getMyProfile(request, env);
           if (pathname.startsWith('/api/people/')) return await publicPerson(env, pathname.slice(12));
           if (assets.has(pathname)) {
@@ -514,6 +570,8 @@ export function createHandler(readAsset) {
           if (pathname === '/api/events') return await record(request, env, true);
           if (pathname === '/api/events/apply') return await applyEventAccess(request, env);
           if (pathname === '/api/events/review') return await reviewEventAccess(request, env);
+          if (pathname === '/api/admin/events') return await removeEvent(request, env);
+          if (pathname === '/api/admin/reviewers') return await adminReviewers(request, env);
           if (pathname === '/api/observations') return await record(request, env);
           if (pathname === '/api/bookmark') return await bookmark(request, env);
           if (pathname === '/api/profile') return await editProfile(request, env);

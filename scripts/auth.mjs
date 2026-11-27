@@ -51,14 +51,22 @@ function readToken(cookieHeader) {
 export function createAuth(db, options = {}) {
   const adoptLegacyUser = (options.adoptLegacyUser || '').trim().toLowerCase();
   const bucket = options.bucket || null;
+  const adminList = (options.adminUsernames || '').split(',').map(item => item.trim()).filter(Boolean);
+  const reviewerList = (options.reviewerUsernames || '').split(',').map(item => item.trim()).filter(Boolean);
   const attempts = new Map();
   let checks = 0;
 
+  // 有效角色：环境变量管理员名单 > 数据库 admin > 数据库/环境变量 reviewer > user。
+  const effectiveRole = user => adminList.includes(user.username) ? 'admin'
+    : user.role === 'admin' ? 'admin'
+    : reviewerList.includes(user.username) || user.role === 'reviewer' ? 'reviewer' : 'user';
+
   async function resolveUser(token) {
     const now = new Date().toISOString();
-    const user = await db.prepare(`SELECT u.id, u.username, u.nickname, u.avatar FROM sessions s
+    const user = await db.prepare(`SELECT u.id, u.username, u.nickname, u.avatar, u.role FROM sessions s
       JOIN users u ON u.id = s.user_id WHERE s.token = ? AND s.expires_at > ?`).bind(token, now).first();
     if (!user) await db.prepare('DELETE FROM sessions WHERE token = ?').bind(token).run();
+    else user.role = effectiveRole(user);
     return user;
   }
 
@@ -189,7 +197,11 @@ export function createAuth(db, options = {}) {
 
   async function me(request) {
     const user = await resolveSession(request.headers.get('Cookie') || '');
-    return json({ signedIn: !!user, username: user?.username || '', nickname: (user?.nickname || user?.username || ''), avatar: user?.avatar || '' });
+    const role = user?.role || 'user';
+    return json({
+      signedIn: !!user, username: user?.username || '', nickname: (user?.nickname || user?.username || ''),
+      avatar: user?.avatar || '', role, reviewer: role !== 'user', admin: role === 'admin',
+    });
   }
 
   async function account(request) {
