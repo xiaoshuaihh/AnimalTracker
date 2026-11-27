@@ -48,7 +48,6 @@ const env = {
   EVENT_REVIEWER_EMAILS: process.env.EVENT_REVIEWER_EMAILS,
   EVENT_REVIEWER_USERNAMES: process.env.EVENT_REVIEWER_USERNAMES,
   CAT_FUNDRAISERS_JSON: process.env.CAT_FUNDRAISERS_JSON,
-  OPENAI_API_KEY: process.env.OPENAI_API_KEY,
   DB: {
     prepare: query => new Statement(query),
     batch(statements) {

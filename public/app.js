@@ -44,7 +44,7 @@ const plusMenu = document.querySelector('#plus-menu');
 const plusButton = document.querySelector('[data-action=plus-menu]');
 const animalIcons = { 猫: 'cat', 狗: 'dog', 鸟类: 'bird', 蛇: 'snake' };
 const state = {
-  animals: [...samples], visits: [...sampleVisits], bookmarks: [], signedIn: false, username: '', nickname: '', avatar: '', ai: false,
+  animals: [...samples], visits: [...sampleVisits], bookmarks: [], signedIn: false, username: '', nickname: '', avatar: '',
   area: '', filter: '', species: '', mapFloating: false, mapPos: null, allVisits: false, loadError: '',
   events: null, eventError: '', eventLoading: false,
   me: undefined, meError: '', person: null, personError: '', fundraisers: [],
@@ -966,7 +966,7 @@ function showRecord(preselected, mode = 'observation') {
   const create = mode === 'animal';
   if (!state.signedIn) return showLogin();
   const selected = findAnimal(preselected);
-  formState = { id: randomId(), photo:'', format:incident || create ? 'photo' : 'text', imageVersion:0, pending:false, autoChoice:false };
+  formState = { id: randomId(), photo:'', format:incident || create ? 'photo' : 'text', imageVersion:0, pending:false };
   showDialog(incident ? '记录特殊事件' : create ? '新增动物' : '记录校园观察', `<form class="form" id="record-form" data-mode="${mode}">
     ${incident ? `<div class="event-notice inline-notice"><h3>提交前请阅读</h3>${eventStatements}</div>
     <label class="checkline"><input name="eventConsent" type="checkbox" required>我已阅读说明，并按目击事实提交。</label>` : ''}
@@ -986,8 +986,6 @@ function showRecord(preselected, mode = 'observation') {
       <img id="photo-preview" class="preview" alt="待提交的动物照片" hidden>
       <p id="photo-status" class="hint" role="status">照片会移除相机定位信息。请避开可辨认的人脸、车牌和敏感点位。</p>
       <label class="checkline" id="photo-consent-row" hidden><input name="photoConsent" type="checkbox">${incident ? '我确认这张照片可供有权限的人员查看。' : '我确认这张照片可公开展示。'}</label>
-      ${!incident && !create && state.ai ? '<label class="checkline"><input name="aiConsent" type="checkbox">允许将处理后的照片发送给 AI 进行识别。</label>' : ''}
-      <p class="hint" id="ai-status" role="status"></p>
     </div>
     ${!incident && !create ? `<div class="upload" id="av-upload" hidden>
       <div class="upload-actions">
@@ -1027,7 +1025,6 @@ function showRecord(preselected, mode = 'observation') {
         <label><input type="radio" name="matchMode" value="existing">确认是已记录的动物</label>
         <label><input type="radio" name="matchMode" value="new">遇到新个体，提交时建立档案</label>
       </div>
-      <p class="hint" id="suggested-matches" role="status"></p>
       <label class="field" id="existing-animal" hidden><span>选择档案</span><select name="animalId">${options([['','请选择档案'],...state.animals.map(animal => [animal.id, animal.name + ' · ' + animal.category + (animal.demo ? '（示例）' : '')])])}</select></label>
       <label class="field" id="new-animal" hidden><span>动物昵称（选填）</span><input name="name" maxlength="40" placeholder="例如：橘子"></label>
     </fieldset>
@@ -1094,8 +1091,13 @@ async function preparePhoto(file, limit = 1200) {
   const source = URL.createObjectURL(file);
   try {
     const image = new Image();
-    image.src = source;
-    await image.decode();
+    // 部分手机浏览器/WebView 的 image.decode() 会永久挂起，改用 onload/onerror 并加超时兜底。
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('图片处理超时，请换一张照片重试。')), 15000);
+      image.onload = () => { clearTimeout(timer); resolve(); };
+      image.onerror = () => { clearTimeout(timer); reject(new Error('无法读取这张图片，请尝试 JPEG、PNG 或 WebP。')); };
+      image.src = source;
+    });
     const canvas = document.createElement('canvas');
     const scale = Math.min(1, limit / Math.max(image.naturalWidth, image.naturalHeight));
     canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
@@ -1124,8 +1126,6 @@ async function setPhoto(form, file) {
   consent.hidden = true;
   form.elements.photoConsent.checked = false;
   form.elements.photoConsent.required = false;
-  form.querySelector('#ai-status').textContent = '';
-  form.querySelector('#suggested-matches').textContent = '';
   try {
     const photo = await preparePhoto(file);
     if (session !== formState || version !== session.imageVersion) return;
@@ -1141,53 +1141,6 @@ async function setPhoto(form, file) {
     status.textContent = error.message.startsWith('请') ? error.message : '无法读取这张照片，请尝试 JPEG、PNG 或 WebP。';
   } finally {
     if (session === formState && version === session.imageVersion) session.pending = false;
-  }
-  if (session === formState && version === session.imageVersion && form.elements.aiConsent?.checked) runIdentification(form);
-}
-
-async function runIdentification(form) {
-  const session = formState;
-  if (!session?.photo || !form.elements.aiConsent?.checked) return;
-  const status = form.querySelector('#ai-status');
-  session.identification?.abort();
-  const controller = new AbortController();
-  session.identification = controller;
-  const version = session.imageVersion;
-  const snapshot = [form.elements.category.value, form.elements.species.value, form.elements.features.value, form.elements.matchMode.value];
-  status.textContent = '正在识别动物类别、物种和外观…';
-  try {
-    const response = await fetch('/api/identify', {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({photo:session.photo}), signal:controller.signal,
-    });
-    const result = await response.json();
-    if (!response.ok) throw new Error(result.error);
-    if (session !== formState || version !== session.imageVersion || session.identification !== controller) return;
-    const fields = [form.elements.category, form.elements.species, form.elements.features];
-    if (result.certainty !== 'none') {
-      const values = [result.category, result.species, result.features];
-      fields.forEach((field, index) => {
-        if (field.value !== snapshot[index] || (index === 0 && field.value !== '待确认') || (index !== 0 && field.value)) return;
-        let value = values[index];
-        if (index === 0 && !Array.from(field.options).some(option => option.value === value)) {
-          field.add(new Option(value, value), field.options[field.options.length - 1]);
-        }
-        field.value = value;
-      });
-    }
-    const suggested = result.candidates.map(findAnimal).filter(Boolean);
-    if (suggested.length) {
-      form.querySelector('#suggested-matches').textContent = '可能的已记录动物：' + suggested.map(animal => animal.name).join('、') + '。请核对后选择档案。';
-    } else if (result.certainty === 'high' && result.category !== '待确认' && snapshot[3] === 'unknown' && !session.autoChoice
-      && form.elements.matchMode.value === 'unknown' && form.dataset.mode === 'observation') {
-      form.elements.matchMode.value = 'new';
-      updateMatch(form);
-      form.querySelector('#suggested-matches').textContent = '没有找到相似档案，已预选建立新档案。你可以修改。';
-    }
-    status.textContent = result.certainty === 'high' ? '已填入 AI 建议，请确认后发布。' :
-      result.certainty === 'low' ? 'AI 识别有疑问，请核对或手动填写。' : '照片里的动物不够清楚，请手动填写或换一张照片。';
-  } catch (error) {
-    if (error.name !== 'AbortError' && session === formState && version === session.imageVersion && session.identification === controller) status.textContent = error.message || '识别失败，请手动填写。';
   }
 }
 
@@ -1238,7 +1191,6 @@ function setObservationFormat(form) {
   session.format = format;
   session.imageVersion++;
   session.pending = false;
-  session.identification?.abort();
   session.photo = '';
   stopCapture(session, true);
   setAttachment(form,null);
@@ -1254,9 +1206,6 @@ function setObservationFormat(form) {
   form.querySelector('#photo-consent-row').hidden = true;
   form.elements.photoConsent.required = false;
   form.elements.photoConsent.checked = false;
-  if (form.elements.aiConsent) form.elements.aiConsent.checked = false;
-  form.querySelector('#ai-status').textContent = '';
-  form.querySelector('#suggested-matches').textContent = '';
   form.elements.note.required = format === 'text';
   form.querySelector('#observation-note-label').textContent = format === 'text' ? '观察文字' : '活动情况（选填）';
 }
@@ -1579,13 +1528,6 @@ document.addEventListener('change', event => {
     if (field.value !== '鸟撞' && form.elements.category.value === '鸟类') form.elements.category.value = '待确认';
     updateCategory(form);
   }
-  if (field.name === 'aiConsent') {
-    if (field.checked) runIdentification(form);
-    else {
-      formState.identification?.abort();
-      form.querySelector('#ai-status').textContent = '';
-    }
-  }
 });
 // 拖动小窗标题栏移动悬浮地图。
 document.addEventListener('pointerdown', event => {
@@ -1645,7 +1587,6 @@ document.addEventListener('submit', event => {
 modal.addEventListener('close', () => {
   if (profileMap) { destroyMap(profileMap); profileMap = null; }
   if (!formState) return;
-  formState.identification?.abort();
   stopCapture(formState,true);
   if (formState.mediaUrl) URL.revokeObjectURL(formState.mediaUrl);
   formState = null;
