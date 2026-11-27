@@ -51,6 +51,11 @@ let profileMap = null;
 let formState = null;
 let toastTimer;
 const esc = text => String(text ?? '').replace(/[&<>"']/g, char => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' })[char]);
+// crypto.randomUUID 仅在安全上下文（HTTPS 或 localhost）可用；经局域网 IP 用 HTTP 访问时退回自实现。
+const randomId = () => crypto.randomUUID ? crypto.randomUUID() : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, char => {
+  const r = crypto.getRandomValues(new Uint8Array(1))[0] % 16;
+  return (char === 'x' ? r : (r & 3 | 8)).toString(16);
+});
 const options = values => values.map(([value, name]) => `<option value="${esc(value)}">${esc(name)}</option>`).join('');
 const findAnimal = id => state.animals.find(animal => animal.id === id);
 // 解析任意地点记录：预置小类、自定义地点（custom: 前缀）或旧版 id。
@@ -817,7 +822,7 @@ function showRecord(preselected, mode = 'observation') {
   const create = mode === 'animal';
   if (!state.signedIn) return showLogin();
   const selected = findAnimal(preselected);
-  formState = { id: crypto.randomUUID(), photo:'', format:incident || create ? 'photo' : 'text', imageVersion:0, pending:false, autoChoice:false };
+  formState = { id: randomId(), photo:'', format:incident || create ? 'photo' : 'text', imageVersion:0, pending:false, autoChoice:false };
   showDialog(incident ? '记录特殊事件' : create ? '新增动物' : '记录校园观察', `<form class="form" id="record-form" data-mode="${mode}">
     ${incident ? `<div class="event-notice inline-notice"><h3>提交前请阅读</h3>${eventStatements}</div>
     <label class="checkline"><input name="eventConsent" type="checkbox" required>我已阅读说明，并按目击事实提交。</label>` : ''}
