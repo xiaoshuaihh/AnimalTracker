@@ -109,7 +109,7 @@ export function createAuth(db, options = {}) {
     return token;
   }
 
-  async function readJson(request) {
+  async function readJson(request, limit = 16_384) {
     const reader = request.body?.getReader();
     const decoder = new TextDecoder();
     let size = 0;
@@ -119,7 +119,7 @@ export function createAuth(db, options = {}) {
         const { done, value } = await reader.read();
         if (done) break;
         size += value.byteLength;
-        if (size > 16_384) throw new AuthError(413, '提交内容过大。');
+        if (size > limit) throw new AuthError(413, '提交内容过大。');
         body += decoder.decode(value, { stream: true });
       }
       body += decoder.decode();
@@ -196,7 +196,8 @@ export function createAuth(db, options = {}) {
     const user = await resolveSession(request.headers.get('Cookie') || '');
     if (!user) throw new AuthError(401, '请先登录。');
     checkOrigin(request);
-    const input = await readJson(request);
+    // 头像为 400px 以内的 JPEG dataURL，放宽请求体上限；登录注册保持默认 16KB。
+    const input = await readJson(request, 1_600_000);
     const nickname = field(input.nickname).slice(0, 24);
     let photo;
     try {
