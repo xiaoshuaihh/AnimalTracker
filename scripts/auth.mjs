@@ -1,5 +1,6 @@
 import { randomBytes, scrypt as scryptCallback, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
+import { cleanJpeg } from '../server/index.js';
 
 const scrypt = promisify(scryptCallback);
 
@@ -49,12 +50,13 @@ function readToken(cookieHeader) {
 
 export function createAuth(db, options = {}) {
   const adoptLegacyUser = (options.adoptLegacyUser || '').trim().toLowerCase();
+  const bucket = options.bucket || null;
   const attempts = new Map();
   let checks = 0;
 
   async function resolveUser(token) {
     const now = new Date().toISOString();
-    const user = await db.prepare(`SELECT u.id, u.username FROM sessions s
+    const user = await db.prepare(`SELECT u.id, u.username, u.nickname, u.avatar FROM sessions s
       JOIN users u ON u.id = s.user_id WHERE s.token = ? AND s.expires_at > ?`).bind(token, now).first();
     if (!user) await db.prepare('DELETE FROM sessions WHERE token = ?').bind(token).run();
     return user;
@@ -154,11 +156,11 @@ export function createAuth(db, options = {}) {
       throw new AuthError(409, '这个用户名已被注册。');
     }
     const id = crypto.randomUUID();
-    await db.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)')
-      .bind(id, username, await hashPassword(password), new Date().toISOString()).run();
+    await db.prepare('INSERT INTO users (id, username, nickname, password_hash, created_at) VALUES (?, ?, ?, ?, ?)')
+      .bind(id, username, username, await hashPassword(password), new Date().toISOString()).run();
     if (adoptLegacyUser === username) await adoptLegacy(id);
     const token = await createSession(id);
-    return json({ signedIn: true, username }, 201, { 'Set-Cookie': cookie(token, secure, sessionDays * 86_400) });
+    return json({ signedIn: true, username, nickname: username }, 201, { 'Set-Cookie': cookie(token, secure, sessionDays * 86_400) });
   }
 
   async function login(request, secure) {
@@ -187,7 +189,31 @@ export function createAuth(db, options = {}) {
 
   async function me(request) {
     const user = await resolveSession(request.headers.get('Cookie') || '');
-    return json({ signedIn: !!user, username: user?.username || '' });
+    return json({ signedIn: !!user, username: user?.username || '', nickname: (user?.nickname || user?.username || ''), avatar: user?.avatar || '' });
+  }
+
+  async function account(request) {
+    const user = await resolveSession(request.headers.get('Cookie') || '');
+    if (!user) throw new AuthError(401, '请先登录。');
+    checkOrigin(request);
+    const input = await readJson(request);
+    const nickname = field(input.nickname).slice(0, 24);
+    let photo;
+    try {
+      photo = cleanJpeg(input.avatar);
+    } catch (error) {
+      throw new AuthError(error.status || 400, error.message);
+    }
+    if (photo && input.avatarConsent !== true) throw new AuthError(400, '请确认头像可以公开显示。');
+    const photoId = photo ? crypto.randomUUID() : '';
+    if (photo) await bucket.put(photoId, photo, { httpMetadata: { contentType: 'image/jpeg' } });
+    const remove = input.removeAvatar === true && !!user.avatar;
+    if ((photo || remove) && user.avatar) await bucket.delete(user.avatar.slice(7));
+    await db.prepare(`UPDATE users SET nickname = CASE WHEN ? <> '' THEN ? ELSE nickname END,
+      avatar = CASE WHEN ? THEN ? WHEN ? THEN '' ELSE avatar END WHERE id = ?`)
+      .bind(nickname, nickname, Number(!!photo), photo ? '/media/' + photoId : '', Number(remove), user.id).run();
+    const fresh = await db.prepare('SELECT username, nickname, avatar FROM users WHERE id = ?').bind(user.id).first();
+    return json({ signedIn: true, username: fresh.username, nickname: fresh.nickname || fresh.username, avatar: fresh.avatar || '' });
   }
 
   async function handle(request, secure) {
@@ -196,6 +222,7 @@ export function createAuth(db, options = {}) {
       if (pathname === '/api/auth/register' && request.method === 'POST') return await register(request, secure);
       if (pathname === '/api/auth/login' && request.method === 'POST') return await login(request, secure);
       if (pathname === '/api/auth/logout' && request.method === 'POST') return await logout(request, secure);
+      if (pathname === '/api/auth/account' && request.method === 'POST') return await account(request);
       if (pathname === '/api/auth/me' && request.method === 'GET') return await me(request);
       return json({ error: '找不到此页面。' }, 404);
     } catch (error) {

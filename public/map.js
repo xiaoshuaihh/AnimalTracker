@@ -10,6 +10,15 @@ const TRACK_COLORS = ['#225a4a', '#946337', '#586c94'];
 // 与 app.js 一致的地点归一化：自定义地点不参与地图过滤。
 const areaKey = id => typeof id !== 'string' || id.startsWith('custom:') ? null : (legacyAreaIds[id] || id);
 
+// 解析地点所属区域：精确点位、旧版 id、或按前缀（upper/lower/middle/lake）推断。
+const regionOfId = id => {
+  if (typeof id !== 'string' || !id || id.startsWith('custom:')) return null;
+  const spot = areas.find(item => item.id === id) || areas.find(item => item.id === legacyAreaIds[id]);
+  if (spot) return spot.region;
+  const prefix = id.split('-')[0];
+  return ['upper','lower','middle','lake','other'].includes(prefix) ? prefix : null;
+};
+
 // MapLibre v5 已移除 maplibregl.supported()，这里自行探测 WebGL 能力。
 const webglSupported = () => {
   try {
@@ -86,13 +95,40 @@ export function renderSightings(map, visits, { selectedArea = '', profile = fals
     markers.push(new maplibregl.Marker({ element: tag, interactive: false })
       .setLngLat([region.label.lng, region.label.lat]).addTo(map));
   }
+  const mappedSpots = new Set();
   for (const spot of areas) {
     if (spot.lng == null) continue;
     const records = visits.filter(visit => areaKey(visit.area) === spot.id);
     if (!records.length) continue;
+    mappedSpots.add(spot.id);
     const element = pinBuilder(spot, records, !profile && selectedArea === spot.id, profile);
     markers.push(new maplibregl.Marker({ element })
       .setLngLat([spot.lng, spot.lat]).addTo(map));
+  }
+  // 无法精确定位的记录（自定义地点、旧版或未收录的地点 id）归到所属区域的标签位置显示。
+  const regionLoose = new Map();
+  const collect = (regionId, visit, label) => {
+    if (!regionLoose.has(regionId)) regionLoose.set(regionId, { visits: [], label });
+    regionLoose.get(regionId).visits.push(visit);
+  };
+  for (const visit of visits) {
+    const key = areaKey(visit.area);
+    if (key !== null) {
+      if (mappedSpots.has(key)) continue;
+      const regionId = regionOfId(visit.area);
+      if (regionId) collect(regionId, visit, '大致位置');
+      continue;
+    }
+    if (visit.area?.startsWith('custom:')) {
+      collect(visit.area.slice(7).split(':')[0] || 'other', visit, '自填地点');
+    }
+  }
+  for (const [regionId, entry] of regionLoose) {
+    const region = regions.find(item => item.id === regionId);
+    if (!region?.label) continue;
+    const spot = { id: 'region-loose-' + regionId, name: region.name + ' · ' + entry.label, lng: region.label.lng, lat: region.label.lat, region: regionId };
+    const element = pinBuilder(spot, entry.visits, false, profile);
+    markers.push(new maplibregl.Marker({ element }).setLngLat([spot.lng, spot.lat]).addTo(map));
   }
   map._wildlifeMarkers = markers;
   const geojson = {

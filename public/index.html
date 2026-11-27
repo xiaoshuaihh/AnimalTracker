@@ -14,14 +14,14 @@
 <body>
   <header class="topbar">
     <div class="shell top-inner">
-      <a class="brand" href="#explore" aria-label="神奇动物在哪里首页"><span class="brand-mark" data-icon="paw"></span><span>神奇动物在哪里<small>CAMPUS WILDLIFE</small></span></a>
-      <nav class="nav" aria-label="主导航">
-        <a href="#explore" data-tab="explore"><span data-icon="map"></span>探索地图</a>
-        <a href="#animals" data-tab="animals"><span data-icon="book"></span>动物档案</a>
-        <a href="#collection" data-tab="collection"><span data-icon="bookmark"></span>我的图鉴</a>
-        <a href="#events" data-tab="events"><span data-icon="event"></span>特殊事件</a>
-      </nav>
-      <a class="button outline top-settings" href="#settings" data-tab="settings"><span data-icon="settings"></span>设置</a>
+      <a class="brand" href="#home" aria-label="神奇动物在哪里首页"><span class="brand-mark" data-icon="paw"></span><span>神奇动物在哪里<small>CAMPUS WILDLIFE</small></span></a>
+      <div class="top-actions">
+        <button type="button" class="top-plus" data-action="plus-menu" aria-label="添加记录" aria-expanded="false" aria-controls="plus-menu"><span data-icon="plus"></span></button>
+        <div class="plus-menu" id="plus-menu" hidden>
+          <button type="button" class="plus-item" data-action="record"><span data-icon="camera"></span>记录观察</button>
+          <button type="button" class="plus-item" data-action="event-record"><span data-icon="event"></span>记录特殊事件</button>
+        </div>
+      </div>
     </div>
   </header>
   <main class="shell" id="main" tabindex="-1"></main>
@@ -29,6 +29,12 @@
     <span><strong>神奇动物在哪里</strong><br>校园动物观察地图</span>
     <details><summary>关于作品</summary><p>2026 AI Vibe Coding 大赛<br>主办单位｜香港中文大学（深圳）人文社科学院跨文化交流学科部</p><p lang="en">2026 AI Vibe Coding Competition<br>Presented by the Division of Intercultural Communication<br>School of Humanities and Social Science<br>The Chinese University of Hong Kong, Shenzhen</p></details>
   </footer>
+  <nav class="tabbar" aria-label="主导航">
+    <a href="#home" data-tab="home"><span class="tab-icon" data-icon="home"></span>首页</a>
+    <a href="#animals" data-tab="animals"><span class="tab-icon" data-icon="book"></span>动物档案</a>
+    <a href="#discover" data-tab="discover"><span class="tab-icon" data-icon="discover"></span>发现</a>
+    <a href="#mine" data-tab="mine"><span class="tab-icon" data-icon="person"></span>我的</a>
+  </nav>
   <dialog id="modal" aria-labelledby="dialog-title"></dialog>
   <div id="announcement" class="toast" role="status" aria-live="polite"></div>
 </body>

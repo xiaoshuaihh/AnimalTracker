@@ -88,7 +88,7 @@ const env = {
     },
   },
 };
-const auth = createAuth(env.DB, { adoptLegacyUser: process.env.WILDLIFE_ADOPT_LEGACY_USER });
+const auth = createAuth(env.DB, { adoptLegacyUser: process.env.WILDLIFE_ADOPT_LEGACY_USER, bucket: env.BUCKET });
 const worker = createHandler(filename => readFile(new URL('public/' + filename, root)));
 function cliOption(name) {
   const index = process.argv.indexOf('--' + name);

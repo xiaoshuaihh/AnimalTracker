@@ -29,6 +29,8 @@ const paths = {
   target: '<circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2"/><path d="M12 2v3m0 14v3M2 12h3m14 0h3"/>',
   star: '<path d="m12 2 3 6 7 1-5 5 1 7-6-3-6 3 1-7-5-5 7-1z"/>',
   lock: '<rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/>',
+  home: '<path d="m3 10.5 9-7.5 9 7.5V20a1.5 1.5 0 0 1-1.5 1.5h-4.5v-6h-6v6H4.5A1.5 1.5 0 0 1 3 20Z"/>',
+  discover: '<circle cx="12" cy="12" r="9"/><path d="m15.5 8.5-2.2 4.8-4.8 2.2 2.2-4.8z"/>',
 };
 
 function icon(name) {
@@ -38,13 +40,15 @@ function icon(name) {
 const main = document.querySelector('#main');
 const modal = document.querySelector('#modal');
 const toast = document.querySelector('#announcement');
+const plusMenu = document.querySelector('#plus-menu');
+const plusButton = document.querySelector('[data-action=plus-menu]');
 const animalIcons = { 猫: 'cat', 狗: 'dog', 鸟类: 'bird', 蛇: 'snake' };
 const state = {
-  animals: [...samples], visits: [...sampleVisits], bookmarks: [], signedIn: false, username: '', ai: false,
+  animals: [...samples], visits: [...sampleVisits], bookmarks: [], signedIn: false, username: '', nickname: '', avatar: '', ai: false,
   area: '', filter: '', species: '', mapFloating: false, mapPos: null, allVisits: false, loadError: '',
   events: null, eventError: '', eventLoading: false,
   me: undefined, meError: '', person: null, personError: '', fundraisers: [],
-  permissions: {}, onboarding: false,
+  permissions: {}, onboarding: false, collectionExpanded: false, achievementsExpanded: false,
 };
 let exploreMap = null;
 let profileMap = null;
@@ -61,9 +65,17 @@ const findAnimal = id => state.animals.find(animal => animal.id === id);
 // 解析任意地点记录：预置小类、自定义地点（custom: 前缀）或旧版 id。
 const areaInfo = id => {
   if (!id) return { id: '', name: '未记录地点', x: null, y: null, region: null };
-  if (id.startsWith('custom:')) return { id, name: id.slice(7).trim(), x: null, y: null, region: 'other', custom: true };
+  if (id.startsWith('custom:')) {
+    const parts = id.slice(7).split(':');
+    return parts.length > 1
+      ? { id, name: parts.slice(1).join(':').trim(), x: null, y: null, region: parts[0], custom: true }
+      : { id, name: id.slice(7).trim(), x: null, y: null, region: 'other', custom: true };
+  }
   const spot = areas.find(item => item.id === id) || areas.find(item => item.id === legacyAreaIds[id]);
-  return spot ? { ...spot } : { id, name: id, x: null, y: null, region: null };
+  if (spot) return { ...spot };
+  const prefix = id.split('-')[0];
+  const region = ['upper','lower','middle','lake','other'].includes(prefix) ? prefix : null;
+  return { id, name: id, x: null, y: null, region };
 };
 const findArea = id => areaInfo(id);
 // 用于按小类过滤记录：旧 id 归一到新小类，自定义地点返回 null（不参与地图过滤）。
@@ -76,7 +88,7 @@ const categoryNames = () => [...new Set([...categories, ...state.animals.map(ani
 const formatDate = date => new Intl.DateTimeFormat('zh-CN', { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit', timeZone:'Asia/Shanghai' }).format(new Date(date));
 const personHandle = () => /^#person\/([a-z0-9_-]{3,24})$/.exec(location.hash)?.[1];
 const selectedTab = () => personHandle() ? 'person' :
-  ['explore','animals','collection','events','settings'].includes(location.hash.slice(1)) ? location.hash.slice(1) : 'explore';
+  ['home','animals','discover','mine','events'].includes(location.hash.slice(1)) ? location.hash.slice(1) : 'home';
 
 async function api(path, body) {
   const multipart = body instanceof FormData;
@@ -110,7 +122,7 @@ async function refresh() {
   if (state.signedIn && !state.username) await loadAccount();
   render();
   if (selectedTab() === 'events') await loadEvents();
-  if (selectedTab() === 'settings') queryPermissionStates();
+  if (selectedTab() === 'mine') queryPermissionStates();
   offerPermissions();
 }
 
@@ -180,8 +192,9 @@ function pinElement(spot, records, selected, profile) {
   const element = document.createElement('button');
   element.type = 'button';
   element.className = 'map-pin';
-  element.dataset.action = profile ? 'profile-point' : 'area';
-  element.dataset.value = spot.id;
+  const regionPin = spot.id.startsWith('region-loose-');
+  element.dataset.action = profile ? 'profile-point' : regionPin ? 'visit' : 'area';
+  element.dataset.value = regionPin ? records[0].id : spot.id;
   element.dataset.visit = records[0].id;
   element.setAttribute('aria-pressed', String(selected));
   element.setAttribute('aria-label', `${selected ? spot.name + '，' : ''}${records.length} 条目击记录：${types}`);
@@ -237,21 +250,14 @@ function feedRow(visit) {
   </button>`;
 }
 
-function explore() {
+function home() {
   const filtered = filteredVisits();
   const visible = filtered.filter(visit => !state.area || areaKey(visit.area) === state.area);
   const displayed = state.allVisits ? visible : visible.slice(0, 3);
   const species = speciesFor(state.filter);
   const chips = [['','全部','filter'], ...categoryNames().map(name => [name,name,categoryIcon(name)])];
   const mapHint = state.species ? '虚线连接同一个体按时间排列的目击点。' : '点击标记查看地点和记录，地图可缩放、拖动。';
-  return `<section class="hero hero-simple">
-    <div class="hero-copy">
-      <h1>神奇动物在哪里</h1>
-      <p>看看校园里的动物在哪里出现过。</p>
-      ${button('记录观察','camera','record','accent hero-record')}
-    </div>
-  </section>
-  ${state.loadError ? `<p class="empty" role="status">${esc(state.loadError)} <button class="text-button" data-action="refresh">重试</button></p>` : ''}
+  return `${state.loadError ? `<p class="empty" role="status">${esc(state.loadError)} <button class="text-button" data-action="refresh">重试</button></p>` : ''}
   <div class="explore-grid">
     <section class="panel">
       <div class="panel-header"><div><h2>校园足迹地图</h2><p>${mapHint}</p></div></div>
@@ -277,24 +283,78 @@ function animalsPage() {
     <section class="card-grid" id="all-animals">${state.animals.map(animalCard).join('')}</section>`;
 }
 
-function collection() {
+function discoverRow(visit) {
+  const animal = findAnimal(visit.animal_id);
+  const title = animal?.name ?? (sightingSpecies(visit) || visit.category);
+  const author = visit.demo ? `<span class="author"><span class="author-avatar">${icon('paw')}</span><span class="author-name">示例记录</span></span>`
+    : `<span class="author"><span class="author-avatar">${visit.author_avatar ? `<img src="${esc(visit.author_avatar)}" alt="作者头像">` : icon('person')}</span><span class="author-name">${esc(visit.author || '观察者')}</span></span>`;
+  const attachment = visit.photo ? `<img class="discover-photo" src="${esc(visit.photo)}" alt="${esc(title)}" loading="lazy">`
+    : visit.media_type?.startsWith('video/') ? `<video class="observation-video" controls preload="metadata" src="${esc(visit.media)}"></video>`
+    : visit.media_type?.startsWith('audio/') ? `<audio class="observation-audio" controls preload="metadata" src="${esc(visit.media)}"></audio>` : '';
+  return `<article class="discover-card">
+    <header class="discover-head">${author}<time>${formatDate(visit.observed_at)}</time></header>
+    ${visit.note ? `<p class="discover-note">${esc(visit.note)}</p>` : ''}
+    ${attachment}
+    <footer class="discover-foot">
+      <span class="pill">${icon(categoryIcon(visit.category))}${esc(visit.category)}${sightingSpecies(visit) ? ' · ' + esc(sightingSpecies(visit)) : ''}</span>
+      <span class="discover-area">${icon('pin')}${esc(findArea(visit.area)?.name || '未知地点')}</span>
+      ${formatMark(visitFormat(visit), true)}
+      ${animal ? `<button class="text-button" data-action="animal" data-value="${esc(animal.id)}">${icon('book')}查看档案</button>` : ''}
+    </footer>
+  </article>`;
+}
+
+function discoverPage() {
+  const visits = [...state.visits].sort((a, b) => b.observed_at.localeCompare(a.observed_at));
+  return `<section class="page-title discover-title"><div><h1>发现</h1><p>校园动物观察动态，按时间顺序展示。</p></div>
+    <a class="button outline" href="#events">${icon('event')}特殊事件</a></section>
+    ${state.loadError ? `<p class="empty" role="status">${esc(state.loadError)} <button class="text-button" data-action="refresh">重试</button></p>` : ''}
+    <div class="discover-feed">${visits.length ? visits.map(discoverRow).join('') : '<p class="empty">暂无观察记录。</p>'}</div>`;
+}
+
+const COLLECTION_PAGE = 6;
+
+function minePage() {
   const mine = state.visits.filter(visit => visit.mine);
   const encountered = new Set(mine.map(visit => visit.animal_id).filter(Boolean));
   const saved = new Set(state.bookmarks);
   const personal = state.animals.filter(animal => saved.has(animal.id) || encountered.has(animal.id));
   const achievements = achievementsFor(mine.map(visit => ({...visit, species:sightingSpecies(visit)})), state.bookmarks);
   const unlockedCount = achievements.filter(([, , , unlocked]) => unlocked).length;
-  return `<section class="page-title"><h1>我的图鉴</h1><p>回看你记录过或收藏的校园动物。</p></section>
-  ${!state.signedIn ? '<div class="collection-banner"><strong>登录后查看你的图鉴</strong>' + button('登录','person','login','primary') + '</div>' : `
-    <div class="collection-banner"><strong>${personal.length} 份动物档案</strong><p>${mine.length} 条日常观察 · ${saved.size} 份收藏</p></div>
-    <section><div class="section-header"><h2>相遇与收藏</h2></div>${personal.length ?
-      `<div class="card-grid">${personal.map(animalCard).join('')}</div>` :
-      '<p class="empty">图鉴还是空的。记录相遇或从动物档案收藏一只动物。</p>'}</section>
-    <section><div class="section-header"><div><h2>成就墙</h2><p>已解锁 ${unlockedCount} / ${achievements.length}</p></div></div><div class="achievements">
-      ${achievements.map(([, title, description, unlocked, symbol]) => `<article class="achievement ${unlocked ? 'unlocked' : ''}">
+  const personalVisible = state.collectionExpanded ? personal : personal.slice(0, COLLECTION_PAGE);
+  const badgesVisible = state.achievementsExpanded ? achievements : achievements.slice(0, COLLECTION_PAGE);
+  const account = state.signedIn ? `<section class="panel mine-panel">
+    <div class="panel-header"><div><h2>账号</h2><p>当前登录：<strong>${esc(state.username)}</strong></p></div>
+      <button type="button" class="text-button" data-action="logout">退出登录</button></div>
+    <div class="account-body">
+      <span class="account-avatar">${state.avatar ? `<img src="${esc(state.avatar)}" alt="我的头像">` : icon('person')}</span>
+      <div class="account-info"><strong>${esc(state.nickname || state.username)}</strong><small>用户名 ${esc(state.username)}</small></div>
+      <div class="account-actions">
+        <button class="button outline" data-action="edit-nickname">修改昵称</button>
+        <button class="button outline" data-action="change-avatar">更换头像</button>
+      </div>
+    </div>
+  </section>` : '<div class="collection-banner"><strong>登录后记录观察、收藏档案并管理设备权限</strong>' + button('登录','person','login','primary') + '</div>';
+  const collection = !state.signedIn ? '<div class="collection-banner"><strong>登录后查看你的图鉴</strong>' + button('登录','person','login','primary') + '</div>' : `
+    <section class="mine-section"><div class="section-header"><div><h2>相遇与收藏</h2><p>${personal.length} 份动物档案 · ${mine.length} 条日常观察 · ${saved.size} 份收藏</p></div></div>
+      ${personalVisible.length ? `<div class="card-grid">${personalVisible.map(animalCard).join('')}</div>` : '<p class="empty">图鉴还是空的。记录相遇或从动物档案收藏一只动物。</p>'}
+      ${personal.length > COLLECTION_PAGE ? `<div class="expand-row"><button class="text-button" data-action="collection-expand">${state.collectionExpanded ? '收起档案' : '展开全部 ' + personal.length + ' 份档案'}</button></div>` : ''}
+    </section>
+    <section class="mine-section"><div class="section-header"><div><h2>成就墙</h2><p>已解锁 ${unlockedCount} / ${achievements.length}</p></div></div>
+      <div class="achievements">${badgesVisible.map(([, title, description, unlocked, symbol]) => `<article class="achievement ${unlocked ? 'unlocked' : ''}">
         <span class="medal">${icon(symbol)}${unlocked ? '' : '<span class="medal-question" aria-hidden="true">?</span>'}</span><strong>${unlocked ? title : '待解锁'}</strong><p>${description}</p>
-      </article>`).join('')}
-    </div></section>`}`;
+      </article>`).join('')}</div>
+      ${achievements.length > COLLECTION_PAGE ? `<div class="expand-row"><button class="text-button" data-action="achievements-expand">${state.achievementsExpanded ? '收起成就' : '展开全部成就'}</button></div>` : ''}
+    </section>`;
+  const permissions = `<section class="panel mine-panel">
+    <div class="panel-header"><div><h2>设备权限</h2><p>可以按需授权，浏览器会显示相应的权限请求。</p></div></div>
+    ${permissionCards()}</section>`;
+  // 管理员模式：为管理员预留的隐藏入口，当前版本不显示。
+  // 后续可在此渲染 <section class="panel mine-panel"><div class="panel-header"><div><h2>管理员模式</h2><p>审核与数据管理。</p></div></div></section>
+  return `<section class="page-title"><h1>我的</h1></section>
+  ${account}
+  <h2 class="mine-group-title">我的图鉴</h2>${collection}
+  <h2 class="mine-group-title">设备权限</h2>${permissions}`;
 }
 
 const statusLabels = { pending: '待审核', approved: '已通过', rejected: '未通过', revoked: '已撤销' };
@@ -448,7 +508,7 @@ let avatarPending = false;
 function permissionCards() {
   return `<div class="permission-grid">${Object.entries(permissionItems).map(([key,[title,symbol,resource]]) => `
     <div class="permission-row"><div>${icon(symbol)}<span><strong>${title}</strong><small data-permission-status="${key}">${permissionText[state.permissions[key]] || resource}</small></span></div>
-    ${button('开启','plus','permission','outline',key)}</div>`).join('')}</div>`;
+    ${state.permissions[key] === 'granted' ? `<button class="button" disabled aria-disabled="true">${icon('star')}已授权</button>` : button('开启','plus','permission','outline',key)}</div>`).join('')}</div>`;
 }
 
 function refreshPermissionLabels() {
@@ -499,7 +559,7 @@ async function requestPermission(kind, trigger) {
 }
 
 function offerPermissions() {
-  if (state.local || state.onboarding || modal.open || !state.signedIn || ['settings','person'].includes(selectedTab())) return;
+  if (state.local || state.onboarding || modal.open || !state.signedIn || ['mine','person'].includes(selectedTab())) return;
   try {
     if (localStorage.getItem('wildlife-device-intro')) return;
     localStorage.setItem('wildlife-device-intro','1');
@@ -526,6 +586,8 @@ async function loadAccount() {
     const data = await api('auth/me');
     state.signedIn = data.signedIn;
     state.username = data.username || '';
+    state.nickname = data.nickname || '';
+    state.avatar = data.avatar || '';
   } catch {
     state.username = '';
   }
@@ -533,42 +595,6 @@ async function loadAccount() {
 
 function profileAvatar(profile) {
   return profile?.avatar ? picture(profile.avatar,'个人头像','person-avatar') : `<span class="person-avatar avatar-placeholder">${icon('person')}</span>`;
-}
-
-function settingsPage() {
-  const mine = state.visits.filter(visit => visit.mine).map(visit => ({...visit, species:sightingSpecies(visit)}));
-  const achievements = achievementsFor(mine,state.bookmarks);
-  const me = state.me;
-  const visible = new Set(me?.badges ?? []);
-  return `<section class="page-title"><h1>设置</h1></section>
-  ${state.signedIn ? `<section class="panel settings-panel">
-    <div class="panel-header"><div><h2>账号</h2><p>当前登录：<strong>${esc(state.username)}</strong></p></div>
-    <button type="button" class="text-button" data-action="logout">退出登录</button></div>
-  </section>
-  <section class="panel settings-panel">
-    <div class="panel-header"><div><h2>设备权限</h2><p>可以按需授权，浏览器会显示相应的权限请求。</p></div></div>
-    ${permissionCards()}</section>
-  <section class="panel settings-panel">
-    <div class="panel-header"><div><h2>编辑个人主页</h2><p>访客可看到你的用户 ID、头像和你选择展示的已解锁成就。</p></div>
-    ${me ? `<a class="button outline" href="#person/${esc(me.handle)}">查看主页</a>` : ''}</div>
-    ${state.meError ? `<p class="error settings-form">${esc(state.meError)} <button class="text-button" data-action="load-me">重试</button></p>` : me === undefined ? '<p class="empty">正在加载个人主页…</p>' :
-    `<form class="form settings-form" id="person-settings">
-      <label class="field"><span>用户 ID</span><input name="handle" required minlength="3" maxlength="24" pattern="[A-Za-z0-9_\\-]{3,24}" value="${esc(me?.handle || '')}" autocomplete="off" placeholder="例如 campus-cat"></label>
-      <div class="avatar-field">
-        ${profileAvatar(me)}
-        <label class="field"><span>上传头像</span><input type="file" accept="image/*" id="avatar-file"></label>
-      </div>
-      <label class="checkline" id="avatar-confirm" hidden><input type="checkbox" name="avatarConsent">我确认新头像可以展示在个人主页。</label>
-      ${me?.avatar ? '<label class="checkline"><input type="checkbox" name="removeAvatar">移除当前头像</label>' : ''}
-      <fieldset><legend>在个人主页展示的成就</legend>
-      <div class="badge-options">${achievements.map(([id,title,,unlocked,symbol]) => `<label class="checkline">
-        <input type="checkbox" name="badges" value="${id}" ${visible.has(id) ? 'checked' : ''} ${unlocked || visible.has(id) ? '' : 'disabled'}>${icon(symbol)}${title}${unlocked ? '' : ' · 未解锁'}</label>`).join('')}</div>
-      </fieldset>
-      <p class="error" role="alert" hidden></p>
-      <div class="form-actions"><button class="button primary" type="submit">保存主页</button></div>
-    </form>`}
-  </section>` :
-    '<div class="collection-banner"><strong>登录后管理设备权限和个人主页</strong>' + button('登录','person','login','primary') + '</div>'}`;
 }
 
 async function setAvatar(file, form) {
@@ -666,7 +692,7 @@ function render() {
   const search = document.querySelector('#animal-search')?.value ?? '';
   // 探索页地图容器跨渲染保留，避免反复重建地图引擎。
   const preserved = main.querySelector('.map-host[data-map=explore]');
-  main.innerHTML = active === 'animals' ? animalsPage() : active === 'collection' ? collection() : active === 'events' ? eventsPage() : active === 'settings' ? settingsPage() : active === 'person' ? personPage() : explore();
+  main.innerHTML = active === 'animals' ? animalsPage() : active === 'discover' ? discoverPage() : active === 'mine' ? minePage() : active === 'events' ? eventsPage() : active === 'person' ? personPage() : home();
   if (preserved) {
     const slot = main.querySelector('.map-slot');
     if (slot) slot.replaceChildren(preserved);
@@ -718,6 +744,17 @@ function showLogin(mode = 'login') {
   showDialog(mode === 'register' ? '注册账号' : '登录', accountDialog(mode), '登录后你的图鉴、收藏和记录会与账号关联。');
 }
 
+function togglePlusMenu() {
+  const open = !plusMenu.hidden;
+  plusMenu.hidden = open;
+  plusButton.setAttribute('aria-expanded', String(!open));
+}
+
+function closePlusMenu() {
+  plusMenu.hidden = true;
+  plusButton.setAttribute('aria-expanded', 'false');
+}
+
 async function submitAuth(form) {
   const mode = form.dataset.mode;
   const submit = form.querySelector('button[type=submit]');
@@ -730,6 +767,8 @@ async function submitAuth(form) {
     });
     state.signedIn = true;
     state.username = data.username;
+    state.nickname = data.nickname || data.username;
+    state.avatar = data.avatar || '';
     state.me = undefined;
     state.meError = '';
     if (form.isConnected) modal.close();
@@ -747,11 +786,98 @@ async function logout() {
   try { await api('auth/logout', {}); } catch {}
   state.signedIn = false;
   state.username = '';
+  state.nickname = '';
+  state.avatar = '';
   state.me = undefined;
   state.bookmarks = [];
   state.events = null;
   await refresh();
   notify('已退出登录。');
+}
+
+function showNicknameDialog() {
+  showDialog('修改昵称', `<form class="form" id="nickname-form">
+    <label class="field"><span>昵称</span><input name="nickname" required maxlength="24" value="${esc(state.nickname || state.username)}" autocomplete="off" placeholder="1–24 个字符，允许与他人相同"></label>
+    <p class="error" role="alert" hidden></p>
+    <div class="form-actions"><button class="button primary" type="submit">保存昵称</button></div>
+  </form>`, '昵称会显示在你的观察记录和发现动态中。');
+}
+
+async function submitNickname(form) {
+  const submit = form.querySelector('[type=submit]');
+  submit.disabled = true;
+  try {
+    const data = await api('auth/account', { nickname: form.elements.nickname.value.trim() });
+    state.nickname = data.nickname;
+    state.avatar = data.avatar;
+    if (form.isConnected) modal.close();
+    notify('昵称已保存。');
+    render();
+  } catch (error) {
+    formError(form, error.message);
+  } finally {
+    submit.disabled = false;
+  }
+}
+
+let accountAvatarDraft = '';
+let accountAvatarVersion = 0;
+
+function showAvatarDialog() {
+  accountAvatarDraft = '';
+  showDialog('更换头像', `<form class="form" id="account-form">
+    <div class="avatar-field">
+      <span class="person-avatar avatar-placeholder">${state.avatar ? `<img src="${esc(state.avatar)}" alt="当前头像">` : icon('person')}</span>
+      <label class="field"><span>上传头像</span><input type="file" accept="image/*" id="account-avatar-file"></label>
+    </div>
+    <label class="checkline" id="account-avatar-confirm" hidden><input type="checkbox" name="avatarConsent">我确认新头像可以公开显示。</label>
+    ${state.avatar ? '<label class="checkline"><input type="checkbox" name="removeAvatar">移除当前头像</label>' : ''}
+    <p class="error" role="alert" hidden></p>
+    <div class="form-actions"><button class="button primary" type="submit">保存头像</button></div>
+  </form>`, '头像会显示在你的记录和发现动态中。');
+}
+
+async function setAccountAvatar(file, form) {
+  const version = ++accountAvatarVersion;
+  accountAvatarDraft = '';
+  form.elements.avatarConsent.checked = false;
+  form.elements.avatarConsent.required = false;
+  form.querySelector('#account-avatar-confirm').hidden = true;
+  if (!file) return;
+  try {
+    const photo = await preparePhoto(file, 400);
+    if (version !== accountAvatarVersion || !form.isConnected) return;
+    const avatar = form.querySelector('.person-avatar');
+    avatar.innerHTML = `<img src="${esc(photo)}" alt="待保存的头像">`;
+    accountAvatarDraft = photo;
+    form.elements.avatarConsent.required = true;
+    form.querySelector('#account-avatar-confirm').hidden = false;
+    if (form.elements.removeAvatar) form.elements.removeAvatar.checked = false;
+    formError(form, '');
+  } catch {
+    if (version === accountAvatarVersion && form.isConnected) formError(form, '无法读取头像，请尝试 JPEG、PNG 或 WebP 照片。');
+  }
+}
+
+async function submitAvatar(form) {
+  const submit = form.querySelector('[type=submit]');
+  submit.disabled = true;
+  try {
+    const data = await api('auth/account', {
+      avatar: accountAvatarDraft,
+      avatarConsent: !!form.elements.avatarConsent.checked,
+      removeAvatar: !!form.elements.removeAvatar?.checked,
+    });
+    state.nickname = data.nickname;
+    state.avatar = data.avatar;
+    if (form.isConnected) modal.close();
+    notify(data.avatar ? '头像已更新。' : '头像已移除。');
+    render();
+  } catch (error) {
+    formError(form, error.message);
+  } finally {
+    submit.disabled = false;
+  }
 }
 
 function showAnimal(animal) {
@@ -1254,7 +1380,7 @@ async function saveObservation(form) {
   const chosen = findArea(fields.area);
   const customName = chosen.custom ? (fields.customArea || '').trim() : '';
   if (chosen.custom && !customName) return formError(form, '请填写具体地点。');
-  const area = chosen.custom ? 'custom:' + customName : fields.area;
+  const area = chosen.custom ? 'custom:' + chosen.region + ':' + customName : fields.area;
   const match = fields.matchMode === 'existing' ? fields.animalId : fields.matchMode;
   if (match === 'new' && category === '待确认') return formError(form, '请先确认新动物的类别，或选择暂不确定个体。');
   const submit = form.querySelector('[type=submit]');
@@ -1290,7 +1416,7 @@ async function saveObservation(form) {
       state.filter = '';
       state.species = '';
       state.allVisits = false;
-      location.hash = 'explore';
+      location.hash = 'home';
       await refresh();
       notify(animalId === id ? '观察已发布，并建立了动物档案。' : animalId ? '观察已发布，已更新动物档案。' : '观察已发布。');
     }
@@ -1360,6 +1486,7 @@ document.addEventListener('click', event => {
   const trigger = event.target.closest('[data-action]');
   if (!trigger) return;
   const { action, value } = trigger.dataset;
+  if (action !== 'plus-menu') closePlusMenu();
   switch (action) {
     case 'record': showRecord(value); break;
     case 'permission': requestPermission(value, trigger); break;
@@ -1367,6 +1494,11 @@ document.addEventListener('click', event => {
     case 'login': showLogin(); break;
     case 'auth-switch': showLogin(value); break;
     case 'logout': logout(); break;
+    case 'plus-menu': togglePlusMenu(); break;
+    case 'edit-nickname': showNicknameDialog(); break;
+    case 'change-avatar': showAvatarDialog(); break;
+    case 'collection-expand': state.collectionExpanded = !state.collectionExpanded; render(); break;
+    case 'achievements-expand': state.achievementsExpanded = !state.achievementsExpanded; render(); break;
     case 'close': modal.close(); break;
     case 'filter': state.filter = value; state.species = ''; state.area = ''; state.allVisits = false; render(); break;
     case 'new-animal': showRecord('', 'animal'); break;
@@ -1406,6 +1538,7 @@ document.addEventListener('input', event => {
 document.addEventListener('change', event => {
   const field = event.target;
   if (field.id === 'avatar-file') { setAvatar(field.files[0], field.form); return; }
+  if (field.id === 'account-avatar-file') { setAccountAvatar(field.files[0], field.form); return; }
   if (field.id === 'map-species') {
     state.species = field.value;
     state.area = '';
@@ -1481,12 +1614,14 @@ window.addEventListener('resize', () => {
 });
 
 document.addEventListener('submit', event => {
-  if (!['record-form','edit-profile','event-application','person-settings','auth-form'].includes(event.target.id)) return;
+  if (!['record-form','edit-profile','event-application','person-settings','auth-form','nickname-form','account-form'].includes(event.target.id)) return;
   event.preventDefault();
   if (event.target.id === 'record-form') saveObservation(event.target);
   else if (event.target.id === 'person-settings') savePerson(event.target);
   else if (event.target.id === 'event-application') submitApplication(event.target);
   else if (event.target.id === 'auth-form') submitAuth(event.target);
+  else if (event.target.id === 'nickname-form') submitNickname(event.target);
+  else if (event.target.id === 'account-form') submitAvatar(event.target);
   else saveProfile(event.target);
 });
 modal.addEventListener('close', () => {
@@ -1498,6 +1633,7 @@ modal.addEventListener('close', () => {
   formState = null;
 });
 window.addEventListener('hashchange', () => {
+  closePlusMenu();
   avatarDraft = '';
   avatarPending = false;
   avatarPreview++;

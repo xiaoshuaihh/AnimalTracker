@@ -39,7 +39,7 @@ function requireViewer(request) {
   return viewer;
 }
 
-function cleanJpeg(value) {
+export function cleanJpeg(value) {
   if (!value) return null;
   const prefix = 'data:image/jpeg;base64,';
   if (typeof value !== 'string' || !value.startsWith(prefix) || value.length > 1_420_000) {
@@ -58,9 +58,16 @@ function cleanJpeg(value) {
     if (bytes[offset] !== 255) invalid();
     const marker = bytes[offset + 1];
     if (marker === 218) return bytes;
-    if ((marker >= 225 && marker <= 239) || marker === 254) invalid();
     const length = (bytes[offset + 2] << 8) + bytes[offset + 3];
     if (length < 2) invalid();
+    if ((marker >= 225 && marker <= 239) || marker === 254) {
+      // 移除 APPn/COM 元数据段（可能含相机、位置等信息），保留图像本身。
+      const stripped = new Uint8Array(bytes.length - 2 - length);
+      stripped.set(bytes.subarray(0, offset));
+      stripped.set(bytes.subarray(offset + 2 + length), offset);
+      bytes = stripped;
+      continue;
+    }
     offset += 2 + length;
   }
   invalid();
@@ -100,7 +107,9 @@ async function bootstrap(request, env) {
   const viewer = request.headers.get('oai-authenticated-user-id') || '';
   const [animals, visits, bookmarks] = await env.DB.batch([
     env.DB.prepare(`SELECT ${animalFields}, (owner = ?) AS editable FROM public_animals ORDER BY creation_order DESC`).bind(viewer),
-    env.DB.prepare(`SELECT ${visitFields}, (owner = ?) AS mine FROM observations WHERE kind = ? ORDER BY observed_at DESC, rowid DESC`).bind(viewer, kinds[0]),
+    env.DB.prepare(`SELECT o.id, o.animal_id, o.category, o.species, o.area, o.kind, o.note, o.photo, o.observed_at, o.media, o.media_type, (o.owner = ?) AS mine,
+      COALESCE(NULLIF(u.nickname, ''), u.username) AS author, COALESCE(u.avatar, '') AS author_avatar
+      FROM observations o LEFT JOIN users u ON u.id = o.owner WHERE o.kind = ? ORDER BY o.observed_at DESC, o.rowid DESC`).bind(viewer, kinds[0]),
     env.DB.prepare('SELECT animal_id FROM bookmarks WHERE owner = ?').bind(viewer),
   ]);
   return json({
@@ -493,8 +502,9 @@ async function readMedia(request, env, path) {
     const entry = await env.DB.prepare(`SELECT media_type AS type FROM observations WHERE media = ? AND kind = ?
       UNION ALL SELECT 'image/jpeg' FROM observations WHERE photo = ? AND kind = ?
       UNION ALL SELECT 'image/jpeg' FROM public_animals WHERE photo = ?
-      UNION ALL SELECT 'image/jpeg' FROM people_profiles WHERE avatar = ? LIMIT 1`)
-      .bind(path, kinds[0], path, kinds[0], path, path).first();
+      UNION ALL SELECT 'image/jpeg' FROM people_profiles WHERE avatar = ?
+      UNION ALL SELECT 'image/jpeg' FROM users WHERE avatar = ? LIMIT 1`)
+      .bind(path, kinds[0], path, kinds[0], path, path, path).first();
     if (!entry) throw new RequestError(404, '找不到文件。');
     contentType = entry.type;
   }
