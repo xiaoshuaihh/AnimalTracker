@@ -13,9 +13,10 @@ const areaKey = id => typeof id !== 'string' || id.startsWith('custom:') ? null 
 // 解析地点所属区域：精确点位、旧版 id、或按前缀（upper/lower/middle/lake）推断。
 const regionOfId = id => {
   if (typeof id !== 'string' || !id || id.startsWith('custom:')) return null;
-  const spot = areas.find(item => item.id === id) || areas.find(item => item.id === legacyAreaIds[id]);
+  const target = legacyAreaIds[id] || id;
+  const spot = areas.find(item => item.id === target);
   if (spot) return spot.region;
-  const prefix = id.split('-')[0];
+  const prefix = target.split('-')[0];
   return ['upper','lower','middle','lake','other'].includes(prefix) ? prefix : null;
 };
 
@@ -127,7 +128,7 @@ export function renderSightings(map, visits, { selectedArea = '', profile = fals
     const region = regions.find(item => item.id === regionId);
     if (!region?.label) continue;
     const spot = { id: 'region-loose-' + regionId, name: region.name + ' · ' + entry.label, lng: region.label.lng, lat: region.label.lat, region: regionId };
-    const element = pinBuilder(spot, entry.visits, false, profile);
+    const element = pinBuilder(spot, entry.visits, !profile && selectedArea === spot.id, profile);
     markers.push(new maplibregl.Marker({ element }).setLngLat([spot.lng, spot.lat]).addTo(map));
   }
   map._wildlifeMarkers = markers;

@@ -81,6 +81,24 @@ const findArea = id => areaInfo(id);
 // 用于按小类过滤记录：旧 id 归一到新小类，自定义地点返回 null（不参与地图过滤）。
 const areaKey = id => id.startsWith('custom:') ? null : (legacyAreaIds[id] || id);
 const regionOf = id => regions.find(region => region.id === id);
+// 记录在地图上的归类：精确点位返回点位 id；自定义或未收录地点返回 region-loose-<区域>。
+const placementOf = visit => {
+  const id = visit.area;
+  if (typeof id !== 'string' || !id) return null;
+  if (id.startsWith('custom:')) return 'region-loose-' + (id.slice(7).split(':')[0] || 'other');
+  const target = legacyAreaIds[id] || id;
+  const spot = areas.find(item => item.id === target);
+  if (spot?.lng != null) return target;
+  const prefix = target.split('-')[0];
+  return ['upper','lower','middle','lake','other'].includes(prefix) ? 'region-loose-' + prefix : null;
+};
+const placementLabel = id => {
+  if (id.startsWith('region-loose-')) {
+    const region = regionOf(id.slice(13));
+    return (region?.name || '其它') + ' · 附近记录';
+  }
+  return findArea(id).name;
+};
 const sightingSpecies = visit => findAnimal(visit.animal_id)?.species || visit.species;
 const isEvent = visit => visit.kind !== kinds[0];
 const categoryIcon = name => Object.hasOwn(animalIcons, name) ? animalIcons[name] : 'paw';
@@ -192,9 +210,8 @@ function pinElement(spot, records, selected, profile) {
   const element = document.createElement('button');
   element.type = 'button';
   element.className = 'map-pin';
-  const regionPin = spot.id.startsWith('region-loose-');
-  element.dataset.action = profile ? 'profile-point' : regionPin ? 'visit' : 'area';
-  element.dataset.value = regionPin ? records[0].id : spot.id;
+  element.dataset.action = profile ? 'profile-point' : 'area';
+  element.dataset.value = spot.id;
   element.dataset.visit = records[0].id;
   element.setAttribute('aria-pressed', String(selected));
   element.setAttribute('aria-label', `${selected ? spot.name + '，' : ''}${records.length} 条目击记录：${types}`);
@@ -252,7 +269,7 @@ function feedRow(visit) {
 
 function home() {
   const filtered = filteredVisits();
-  const visible = filtered.filter(visit => !state.area || areaKey(visit.area) === state.area);
+  const visible = filtered.filter(visit => !state.area || placementOf(visit) === state.area);
   const displayed = state.allVisits ? visible : visible.slice(0, 3);
   const species = speciesFor(state.filter);
   const chips = [['','全部','filter'], ...categoryNames().map(name => [name,name,categoryIcon(name)])];
@@ -269,7 +286,7 @@ function home() {
       ${filtered.length ? '' : '<p class="empty map-empty">当前筛选暂无目击点。</p>'}
     </section>
     <section class="panel">
-      <div class="panel-header feed-heading"><div><h2>${state.area ? esc(findArea(state.area).name) : '最新观察'}</h2><p>${state.area ? visible.length + ' 条区域记录' : '按观察时间排序'}</p></div>${state.area ? '<button class="text-button" data-action="area" data-value="">清除地点</button>' : icon('clock')}</div>
+      <div class="panel-header feed-heading"><div><h2>${state.area ? esc(placementLabel(state.area)) : '最新观察'}</h2><p>${state.area ? visible.length + ' 条区域记录' : '按观察时间排序'}</p></div>${state.area ? '<button class="text-button" data-action="area" data-value="">清除地点</button>' : icon('clock')}</div>
       <div class="feed-list" aria-live="polite">${displayed.length ? displayed.map(feedRow).join('') : '<p class="empty">这个范围内暂无观察。</p>'}</div>
       ${visible.length > 3 ? `<div class="feed-footer"><button class="text-button" data-action="more">${state.allVisits ? '收起观察记录' : '查看全部观察'}</button></div>` : ''}
     </section>
