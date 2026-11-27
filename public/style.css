@@ -139,7 +139,7 @@ legend{font-size:14px;font-weight:700;padding-inline:5px}
 .checkline{display:flex;align-items:flex-start;gap:7px;font-size:13px;line-height:1.45}
 .preview{max-height:150px;object-fit:contain;margin-top:8px;background:#e8efe5;border-radius:8px}
 .error{font-size:14px;line-height:1.5;color:#a14037}
-.profile-photo{height:220px;border-radius:12px;margin-bottom:13px}
+.profile-photo{height:auto;max-height:none;border-radius:12px;margin-bottom:13px}
 .profile-facts{display:grid;gap:8px;margin-bottom:13px;font-size:14px}
 .profile-facts p,.timeline li{line-height:1.55;overflow-wrap:anywhere}
 .profile-map{margin:15px 0}
@@ -189,7 +189,7 @@ main{padding-top:12px}
 .author-name{font-weight:750;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .discover-head time{font-size:12px;color:var(--muted);white-space:nowrap}
 .discover-note{font-size:15px;line-height:1.6;overflow-wrap:anywhere}
-.discover-photo{border-radius:12px;max-height:430px}
+.discover-photo{height:auto;max-height:none;border-radius:12px}
 .discover-foot{display:flex;align-items:center;gap:9px;flex-wrap:wrap;font-size:13px;color:var(--muted)}
 .discover-foot .pill{font-size:12px}
 .discover-foot .pill .icon{width:13px;height:13px}
@@ -267,7 +267,7 @@ main{padding-top:12px}
 .record-formats .icon{width:16px;height:16px}
 .record-formats input:checked+span{background:var(--soft);border-color:#8fa897;color:var(--forest);font-weight:750}
 .record-formats input:focus-visible+span{outline:3px solid #d37539;outline-offset:2px}
-video.av-preview,.observation-video{display:block;width:100%;max-height:300px;background:#18241d;border-radius:9px;margin:8px 0}
+video.av-preview,.observation-video{display:block;width:100%;max-height:300px;background:#18241d;border-radius:9px;margin:8px 0;object-fit:contain}
 audio.av-preview,.observation-audio{display:block;width:100%;max-width:400px;margin:8px 0 12px}
 .person-title,.avatar-field{display:flex;gap:15px;align-items:center}
 .person-title h1{overflow-wrap:anywhere}
