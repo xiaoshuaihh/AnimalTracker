@@ -4,6 +4,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { Readable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 import { createHandler } from '../server/index.js';
+import { createAuth } from './auth.mjs';
 
 const root = new URL('../', import.meta.url);
 const directory = process.env.WILDLIFE_DATA_DIR ? new URL('file://' + process.env.WILDLIFE_DATA_DIR.replace(/\/$/, '') + '/') : new URL('.local/', root);
@@ -44,8 +45,8 @@ class Statement {
   }
 }
 const env = {
-  LOCAL_DEMO: true,
   EVENT_REVIEWER_EMAILS: process.env.EVENT_REVIEWER_EMAILS,
+  EVENT_REVIEWER_USERNAMES: process.env.EVENT_REVIEWER_USERNAMES,
   CAT_FUNDRAISERS_JSON: process.env.CAT_FUNDRAISERS_JSON,
   OPENAI_API_KEY: process.env.OPENAI_API_KEY,
   DB: {
@@ -87,6 +88,7 @@ const env = {
     },
   },
 };
+const auth = createAuth(env.DB, { adoptLegacyUser: process.env.WILDLIFE_ADOPT_LEGACY_USER });
 const worker = createHandler(filename => readFile(new URL('public/' + filename, root)));
 function cliOption(name) {
   const index = process.argv.indexOf('--' + name);
@@ -99,12 +101,28 @@ const server = createServer(async (incoming, outgoing) => {
     const scheme = incoming.headers['x-forwarded-proto'] === 'https' ? 'https' : 'http';
     const origin = scheme + '://' + (incoming.headers.host || 'localhost:' + port);
     const url = new URL(incoming.url, origin);
+    const hasBody = incoming.method !== 'GET' && incoming.method !== 'HEAD';
+    if (url.pathname.startsWith('/api/auth/')) {
+      const request = new Request(url, {
+        method: incoming.method,
+        headers: new Headers(incoming.headers),
+        ...(hasBody ? { body: Readable.toWeb(incoming), duplex: 'half' } : {}),
+      });
+      const result = await auth.handle(request, scheme === 'https');
+      outgoing.writeHead(result.status, Object.fromEntries(result.headers));
+      if (result.body) Readable.fromWeb(result.body).pipe(outgoing);
+      else outgoing.end();
+      return;
+    }
     const headers = new Headers(incoming.headers);
     headers.delete('oai-authenticated-user-id');
     headers.delete('oai-authenticated-user-email');
-    if (process.env.WILDLIFE_DEMO_EMAIL) headers.set('oai-authenticated-user-email', process.env.WILDLIFE_DEMO_EMAIL);
-    headers.set('oai-authenticated-user-id', process.env.WILDLIFE_DEMO_VIEWER || 'local-demo');
-    const hasBody = incoming.method !== 'GET' && incoming.method !== 'HEAD';
+    headers.delete('oai-authenticated-user-name');
+    const viewer = await auth.resolveSession(incoming.headers.cookie || '');
+    if (viewer) {
+      headers.set('oai-authenticated-user-id', viewer.id);
+      headers.set('oai-authenticated-user-name', viewer.username);
+    }
     const request = new Request(url, {
       method: incoming.method,
       headers,

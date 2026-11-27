@@ -40,7 +40,7 @@ const modal = document.querySelector('#modal');
 const toast = document.querySelector('#announcement');
 const animalIcons = { 猫: 'cat', 狗: 'dog', 鸟类: 'bird', 蛇: 'snake' };
 const state = {
-  animals: [...samples], visits: [...sampleVisits], bookmarks: [], signedIn: false, ai: false,
+  animals: [...samples], visits: [...sampleVisits], bookmarks: [], signedIn: false, username: '', ai: false,
   area: '', filter: '', species: '', mapFloating: false, mapPos: null, allVisits: false, loadError: '',
   events: null, eventError: '', eventLoading: false,
   me: undefined, meError: '', person: null, personError: '', fundraisers: [],
@@ -79,7 +79,14 @@ async function api(path, body) {
     method: 'POST', ...(multipart ? {body} : {headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)}),
   } : undefined);
   const data = await result.json();
-  if (!result.ok) throw new Error(data.error || '操作失败，请稍后重试。');
+  if (!result.ok) {
+    if (result.status === 401 && !path.startsWith('auth/')) {
+      state.signedIn = false;
+      state.username = '';
+      showLogin();
+    }
+    throw new Error(data.error || '操作失败，请稍后重试。');
+  }
   return data;
 }
 
@@ -95,6 +102,7 @@ async function refresh() {
     state.loadError = '暂时无法同步校园观察，页面仍可浏览示例记录。';
   }
   if (state.signedIn && state.me === undefined) await loadMe();
+  if (state.signedIn && !state.username) await loadAccount();
   render();
   if (selectedTab() === 'events') await loadEvents();
   if (selectedTab() === 'settings') queryPermissionStates();
@@ -272,7 +280,7 @@ function collection() {
   const achievements = achievementsFor(mine.map(visit => ({...visit, species:sightingSpecies(visit)})), state.bookmarks);
   const unlockedCount = achievements.filter(([, , , unlocked]) => unlocked).length;
   return `<section class="page-title"><h1>我的图鉴</h1><p>回看你记录过或收藏的校园动物。</p></section>
-  ${!state.signedIn ? '<div class="collection-banner"><strong>登录后查看你的图鉴</strong><a class="button primary" href="/signin-with-chatgpt?return_to=%2F%23collection" target="_top">登录</a></div>' : `
+  ${!state.signedIn ? '<div class="collection-banner"><strong>登录后查看你的图鉴</strong>' + button('登录','person','login','primary') + '</div>' : `
     <div class="collection-banner"><strong>${personal.length} 份动物档案</strong><p>${mine.length} 条日常观察 · ${saved.size} 份收藏</p></div>
     <section><div class="section-header"><h2>相遇与收藏</h2></div>${personal.length ?
       `<div class="card-grid">${personal.map(animalCard).join('')}</div>` :
@@ -297,7 +305,7 @@ function eventsPage() {
   const application = data?.application;
   const filtered = data?.events || [];
   const account = !state.signedIn
-    ? '<div class="collection-banner"><strong>登录后记录及查看你提交的事件</strong><a class="button primary" href="/signin-with-chatgpt?return_to=%2F%23events" target="_top">登录</a></div>'
+    ? '<div class="collection-banner"><strong>登录后记录及查看你提交的事件</strong>' + button('登录','person','login','primary') + '</div>'
     : `<div class="section-header">
       <div><h2>${data?.canViewAll ? '已授权的事件记录' : '我的事件记录'}</h2>
       ${application ? `<p>查看权限 · ${statusLabels[application.status]} · ${esc(eventRoles[application.role])}</p>` : ''}</div>
@@ -508,6 +516,16 @@ async function loadMe() {
   }
 }
 
+async function loadAccount() {
+  try {
+    const data = await api('auth/me');
+    state.signedIn = data.signedIn;
+    state.username = data.username || '';
+  } catch {
+    state.username = '';
+  }
+}
+
 function profileAvatar(profile) {
   return profile?.avatar ? picture(profile.avatar,'个人头像','person-avatar') : `<span class="person-avatar avatar-placeholder">${icon('person')}</span>`;
 }
@@ -519,6 +537,10 @@ function settingsPage() {
   const visible = new Set(me?.badges ?? []);
   return `<section class="page-title"><h1>设置</h1></section>
   ${state.signedIn ? `<section class="panel settings-panel">
+    <div class="panel-header"><div><h2>账号</h2><p>当前登录：<strong>${esc(state.username)}</strong></p></div>
+    <button type="button" class="text-button" data-action="logout">退出登录</button></div>
+  </section>
+  <section class="panel settings-panel">
     <div class="panel-header"><div><h2>设备权限</h2><p>可以按需授权，浏览器会显示相应的权限请求。</p></div></div>
     ${permissionCards()}</section>
   <section class="panel settings-panel">
@@ -541,7 +563,7 @@ function settingsPage() {
       <div class="form-actions"><button class="button primary" type="submit">保存主页</button></div>
     </form>`}
   </section>` :
-    '<div class="collection-banner"><strong>登录后管理设备权限和个人主页</strong><a class="button primary" href="/signin-with-chatgpt?return_to=%2F%23settings" target="_top">登录</a></div>'}`;
+    '<div class="collection-banner"><strong>登录后管理设备权限和个人主页</strong>' + button('登录','person','login','primary') + '</div>'}`;
 }
 
 async function setAvatar(file, form) {
@@ -673,9 +695,58 @@ function showDialog(title, content, subtitle = '') {
   if (!modal.open) modal.showModal();
 }
 
-function showLogin() {
-  const returnTo = encodeURIComponent('/' + location.hash);
-  showDialog('登录后继续', `<a class="button primary" href="/signin-with-chatgpt?return_to=${returnTo}" target="_top">登录</a>`, '个人图鉴、收藏和你发布的记录会与你的账号关联。');
+function accountDialog(mode = 'login') {
+  const register = mode === 'register';
+  return `<form class="form" id="auth-form" data-mode="${mode}">
+    <label class="field"><span>用户名</span><input name="username" required minlength="3" maxlength="24" pattern="[A-Za-z0-9_\\-]{3,24}" autocomplete="username" placeholder="3–24 位字母、数字、下划线或连字符" autofocus></label>
+    <label class="field"><span>密码</span><input type="password" name="password" required minlength="8" maxlength="128" autocomplete="${register ? 'new-password' : 'current-password'}"></label>
+    ${register ? '<p class="hint">注册后即可记录观察、收藏档案并编辑个人主页。</p>' : ''}
+    <p class="error" role="alert" hidden></p>
+    <div class="form-actions">
+      <button class="button primary" type="submit">${register ? '注册' : '登录'}</button>
+      <button type="button" class="text-button" data-action="auth-switch" data-value="${register ? 'login' : 'register'}">${register ? '已有账号？登录' : '没有账号？注册'}</button>
+    </div>
+  </form>`;
+}
+
+function showLogin(mode = 'login') {
+  showDialog(mode === 'register' ? '注册账号' : '登录', accountDialog(mode), '登录后你的图鉴、收藏和记录会与账号关联。');
+}
+
+async function submitAuth(form) {
+  const mode = form.dataset.mode;
+  const submit = form.querySelector('button[type=submit]');
+  const errorEl = form.querySelector('.error');
+  submit.disabled = true;
+  try {
+    const data = await api('auth/' + mode, {
+      username: form.elements.username.value.trim().toLowerCase(),
+      password: form.elements.password.value,
+    });
+    state.signedIn = true;
+    state.username = data.username;
+    state.me = undefined;
+    state.meError = '';
+    if (form.isConnected) modal.close();
+    await refresh();
+    notify(mode === 'register' ? '注册成功，欢迎加入。' : '登录成功。');
+  } catch (error) {
+    errorEl.hidden = false;
+    errorEl.textContent = error.message;
+  } finally {
+    submit.disabled = false;
+  }
+}
+
+async function logout() {
+  try { await api('auth/logout', {}); } catch {}
+  state.signedIn = false;
+  state.username = '';
+  state.me = undefined;
+  state.bookmarks = [];
+  state.events = null;
+  await refresh();
+  notify('已退出登录。');
 }
 
 function showAnimal(animal) {
@@ -1288,6 +1359,9 @@ document.addEventListener('click', event => {
     case 'record': showRecord(value); break;
     case 'permission': requestPermission(value, trigger); break;
     case 'load-me': loadMe().then(render); break;
+    case 'login': showLogin(); break;
+    case 'auth-switch': showLogin(value); break;
+    case 'logout': logout(); break;
     case 'close': modal.close(); break;
     case 'filter': state.filter = value; state.species = ''; state.area = ''; state.allVisits = false; render(); break;
     case 'new-animal': showRecord('', 'animal'); break;
@@ -1402,11 +1476,12 @@ window.addEventListener('resize', () => {
 });
 
 document.addEventListener('submit', event => {
-  if (!['record-form','edit-profile','event-application','person-settings'].includes(event.target.id)) return;
+  if (!['record-form','edit-profile','event-application','person-settings','auth-form'].includes(event.target.id)) return;
   event.preventDefault();
   if (event.target.id === 'record-form') saveObservation(event.target);
   else if (event.target.id === 'person-settings') savePerson(event.target);
   else if (event.target.id === 'event-application') submitApplication(event.target);
+  else if (event.target.id === 'auth-form') submitAuth(event.target);
   else saveProfile(event.target);
 });
 modal.addEventListener('close', () => {

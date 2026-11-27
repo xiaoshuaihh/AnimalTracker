@@ -278,8 +278,10 @@ async function createAnimal(request, env) {
 
 function canReview(request, env) {
   const email = request.headers.get('oai-authenticated-user-email')?.trim().toLowerCase();
+  const username = request.headers.get('oai-authenticated-user-name')?.trim();
   const allowed = (env.EVENT_REVIEWER_EMAILS || '').split(',').map(item => item.trim().toLowerCase()).filter(Boolean);
-  return !!email && allowed.includes(email);
+  const reviewers = (env.EVENT_REVIEWER_USERNAMES || '').split(',').map(item => item.trim()).filter(Boolean);
+  return (!!email && allowed.includes(email)) || (!!username && reviewers.includes(username));
 }
 
 async function currentApplication(env, viewer) {
