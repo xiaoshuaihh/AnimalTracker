@@ -97,7 +97,8 @@ main{padding-top:25px;min-height:65vh}
 .card-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}
 .animal-card{position:relative;overflow:hidden;border:1px solid var(--line);border-radius:16px;background:#fff;min-width:0;display:flex;flex-direction:column}
 .animal-card a,.animal-card .card-open{display:block;text-align:left;padding:0;border:0;background:transparent;width:100%}
-.animal-card .cover,.animal-card .no-photo{width:100%;aspect-ratio:2.28;object-position:center 45%}
+.animal-card .cover,.animal-card .no-photo{width:100%;aspect-ratio:2.28}
+.animal-card .cover{object-fit:contain;background:var(--soft)}
 .animal-card .card-body{padding:13px 15px 15px}
 .card-body strong{display:block;font-size:20px}
 .card-body small{display:block;font-size:13px;color:var(--muted);margin-top:4px}
