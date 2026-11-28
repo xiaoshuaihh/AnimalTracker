@@ -1,6 +1,15 @@
 export const categories = ['猫', '狗', '鸟类', '蛇'];
 export const kinds = ['日常观察', '鸟撞', '车辆碰撞', '其他疑似受伤事件'];
 
+// 观察标签：每个动物类别有独立的一套标签，记录时可多选，也可新增自定义标签。
+// 实际可选标签 = 这里的预设 + 该类别历史记录中出现过的标签。
+export const tagPresets = {
+  猫: ['白猫', '黑猫', '狸花猫', '橘猫', '三花猫', '奶牛猫', '玳瑁猫', '长毛猫', '短毛猫', '幼猫'],
+  狗: ['白狗', '黑狗', '黄狗', '花狗', '卷毛狗', '大型犬', '小型犬', '幼犬'],
+  鸟类: ['白羽', '黑羽', '彩色羽毛', '长尾', '猛禽', '水鸟', '幼鸟'],
+  蛇: ['小蛇', '大蛇', '无毒蛇', '疑似毒蛇', '黑蛇', '花蛇'],
+};
+
 export const eventRoles = {
   animal_welfare: '动物保护协会成员',
   campus_management: '校级相关管理人员',
@@ -110,14 +119,14 @@ export const samples = [
 ];
 
 export const sampleVisits = [
-  { id: 'demo-visit-1', animal_id: 'demo-orange', category: '猫', species: '家猫', area: 'lower-library', kind: '日常观察', note: '午后在石阶上晒太阳。', photo: '/assets/cat.jpg', observed_at: '2026-11-25T06:32:00.000Z', demo: true },
-  { id: 'demo-visit-2', animal_id: 'demo-bulbul', category: '鸟类', species: '红耳鹎', area: 'lake-shore', kind: '日常观察', note: '在湖边的树枝上鸣叫。', photo: '/assets/bird.jpg', observed_at: '2026-11-25T01:15:00.000Z', demo: true },
-  { id: 'demo-visit-3', animal_id: 'demo-dog', category: '狗', species: '家犬', area: 'upper-college', kind: '日常观察', note: '在草坪边休息。', photo: '/assets/dog.jpg', observed_at: '2026-11-24T08:42:00.000Z', demo: true },
-  { id: 'demo-visit-4', animal_id: 'demo-orange', category: '猫', species: '家猫', area: 'middle-teaching', kind: '日常观察', note: '从步道旁经过。', photo: '/assets/cat.jpg', observed_at: '2026-11-23T04:30:00.000Z', demo: true },
-  { id: 'demo-visit-5', animal_id: 'demo-bulbul', category: '鸟类', species: '红耳鹎', area: 'lower-gym', kind: '日常观察', note: '停在运动场外围树枝上。', photo: '/assets/bird.jpg', observed_at: '2026-11-22T03:15:00.000Z', demo: true },
-  { id: 'demo-visit-6', animal_id: 'demo-dog', category: '狗', species: '家犬', area: 'lake-garden', kind: '日常观察', note: '沿绿道缓慢走过。', photo: '/assets/dog.jpg', observed_at: '2026-11-21T09:03:00.000Z', demo: true },
-  { id: 'demo-visit-7', animal_id: 'demo-bulbul-white', category: '鸟类', species: '白头鹎', area: 'middle-teaching', kind: '日常观察', note: '从教学楼旁的树丛飞过。', photo: '', observed_at: '2026-11-23T02:10:00.000Z', demo: true },
-  { id: 'demo-visit-8', animal_id: 'demo-bulbul-white', category: '鸟类', species: '白头鹎', area: 'lake-garden', kind: '日常观察', note: '在绿道旁的树枝停留。', photo: '', observed_at: '2026-11-20T08:20:00.000Z', demo: true },
+  { id: 'demo-visit-1', animal_id: 'demo-orange', category: '猫', species: '家猫', area: 'lower-library', kind: '日常观察', note: '午后在石阶上晒太阳。', photo: '/assets/cat.jpg', observed_at: '2026-11-25T06:32:00.000Z', tags: ['橘猫', '短毛猫'], demo: true },
+  { id: 'demo-visit-2', animal_id: 'demo-bulbul', category: '鸟类', species: '红耳鹎', area: 'lake-shore', kind: '日常观察', note: '在湖边的树枝上鸣叫。', photo: '/assets/bird.jpg', observed_at: '2026-11-25T01:15:00.000Z', tags: ['彩色羽毛'], demo: true },
+  { id: 'demo-visit-3', animal_id: 'demo-dog', category: '狗', species: '家犬', area: 'upper-college', kind: '日常观察', note: '在草坪边休息。', photo: '/assets/dog.jpg', observed_at: '2026-11-24T08:42:00.000Z', tags: ['黄狗'], demo: true },
+  { id: 'demo-visit-4', animal_id: 'demo-orange', category: '猫', species: '家猫', area: 'middle-teaching', kind: '日常观察', note: '从步道旁经过。', photo: '/assets/cat.jpg', observed_at: '2026-11-23T04:30:00.000Z', tags: ['橘猫'], demo: true },
+  { id: 'demo-visit-5', animal_id: 'demo-bulbul', category: '鸟类', species: '红耳鹎', area: 'lower-gym', kind: '日常观察', note: '停在运动场外围树枝上。', photo: '/assets/bird.jpg', observed_at: '2026-11-22T03:15:00.000Z', tags: ['彩色羽毛', '长尾'], demo: true },
+  { id: 'demo-visit-6', animal_id: 'demo-dog', category: '狗', species: '家犬', area: 'lake-garden', kind: '日常观察', note: '沿绿道缓慢走过。', photo: '/assets/dog.jpg', observed_at: '2026-11-21T09:03:00.000Z', tags: ['黄狗'], demo: true },
+  { id: 'demo-visit-7', animal_id: 'demo-bulbul-white', category: '鸟类', species: '白头鹎', area: 'middle-teaching', kind: '日常观察', note: '从教学楼旁的树丛飞过。', photo: '', observed_at: '2026-11-23T02:10:00.000Z', tags: ['白羽'], demo: true },
+  { id: 'demo-visit-8', animal_id: 'demo-bulbul-white', category: '鸟类', species: '白头鹎', area: 'lake-garden', kind: '日常观察', note: '在绿道旁的树枝停留。', photo: '', observed_at: '2026-11-20T08:20:00.000Z', tags: ['白羽'], demo: true },
 ];
 
 export function achievementsFor(visits, bookmarks, now = new Date()) {

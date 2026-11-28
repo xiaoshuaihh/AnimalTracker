@@ -45,8 +45,6 @@ class Statement {
   }
 }
 const env = {
-  EVENT_REVIEWER_EMAILS: process.env.EVENT_REVIEWER_EMAILS,
-  EVENT_REVIEWER_USERNAMES: process.env.EVENT_REVIEWER_USERNAMES,
   EVENT_ADMIN_USERNAMES: process.env.EVENT_ADMIN_USERNAMES,
   CAT_FUNDRAISERS_JSON: process.env.CAT_FUNDRAISERS_JSON,
   DB: {
@@ -92,7 +90,6 @@ const auth = createAuth(env.DB, {
   adoptLegacyUser: process.env.WILDLIFE_ADOPT_LEGACY_USER,
   bucket: env.BUCKET,
   adminUsernames: process.env.EVENT_ADMIN_USERNAMES,
-  reviewerUsernames: process.env.EVENT_REVIEWER_USERNAMES,
 });
 const worker = createHandler(filename => readFile(new URL('public/' + filename, root)));
 function cliOption(name) {

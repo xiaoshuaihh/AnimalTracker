@@ -1,4 +1,4 @@
-import { regions, areas, legacyAreaIds, categories, kinds, samples, sampleVisits, eventRoles, achievementsFor } from './data.js';
+import { regions, areas, legacyAreaIds, categories, kinds, samples, sampleVisits, eventRoles, achievementsFor, tagPresets } from './data.js';
 import { createMap, renderSightings, destroyMap } from './map.js';
 
 const paths = {
@@ -28,6 +28,7 @@ const paths = {
   camera: '<path d="M3 7h4l2-3h6l2 3h4v13H3Z"/><circle cx="12" cy="13" r="3"/>',
   target: '<circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2"/><path d="M12 2v3m0 14v3M2 12h3m14 0h3"/>',
   star: '<path d="m12 2 3 6 7 1-5 5 1 7-6-3-6 3 1-7-5-5 7-1z"/>',
+  search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.8-3.8"/>',
   lock: '<rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/>',
   home: '<path d="m3 10.5 9-7.5 9 7.5V20a1.5 1.5 0 0 1-1.5 1.5h-4.5v-6h-6v6H4.5A1.5 1.5 0 0 1 3 20Z"/>',
   discover: '<circle cx="12" cy="12" r="9"/><path d="m15.5 8.5-2.2 4.8-4.8 2.2 2.2-4.8z"/>',
@@ -44,10 +45,10 @@ const plusMenu = document.querySelector('#plus-menu');
 const plusButton = document.querySelector('[data-action=plus-menu]');
 const animalIcons = { 猫: 'cat', 狗: 'dog', 鸟类: 'bird', 蛇: 'snake' };
 const state = {
-  animals: [...samples], visits: [...sampleVisits], bookmarks: [], signedIn: false, username: '', nickname: '', avatar: '', admin: false, reviewer: false,
+  animals: [...samples], visits: [...sampleVisits], bookmarks: [], signedIn: false, username: '', nickname: '', avatar: '', admin: false, coreAdmin: false,
   area: '', filter: '', species: '', mapFloating: false, mapPos: null, allVisits: false, loadError: '',
   events: null, eventError: '', eventLoading: false,
-  me: undefined, meError: '', person: null, personError: '', fundraisers: [],
+  me: undefined, meError: '', person: null, personError: '', fundraisers: [], edits: [],
   permissions: {}, onboarding: false, collectionExpanded: false, achievementsExpanded: false,
 };
 let exploreMap = null;
@@ -61,6 +62,13 @@ const randomId = () => crypto.randomUUID ? crypto.randomUUID() : 'xxxxxxxx-xxxx-
   return (char === 'x' ? r : (r & 3 | 8)).toString(16);
 });
 const options = values => values.map(([value, name]) => `<option value="${esc(value)}">${esc(name)}</option>`).join('');
+const genderOptions = [['未知', '未知'], ['公', '公'], ['母', '母']];
+// 可选标签 = 该类别预设 + 历史记录中出现过的标签 + 本次会话已选的标签。
+const tagPoolFor = (category, selected = []) => [...new Set([
+  ...(tagPresets[category] || []),
+  ...state.visits.filter(visit => visit.category === category).flatMap(visit => visit.tags || []),
+  ...selected,
+])];
 const findAnimal = id => state.animals.find(animal => animal.id === id);
 // 解析任意地点记录：预置小类、自定义地点（custom: 前缀）或旧版 id。
 const areaInfo = id => {
@@ -131,6 +139,7 @@ async function refresh() {
     Object.assign(state, data, {
       animals: [...data.animals, ...samples],
       visits: [...data.visits, ...sampleVisits].sort((a, b) => b.observed_at.localeCompare(a.observed_at)),
+      edits: data.edits || [],
       loadError: '',
     });
   } catch {
@@ -190,13 +199,13 @@ function mapView(visits, { profile = false } = {}) {
   const floating = !profile && state.mapFloating;
   const position = floating && state.mapPos ? `left:${state.mapPos.x}px;top:${state.mapPos.y}px` : '';
   const handle = floating ? `<div class="float-handle" data-action="map-drag"><span class="grip" aria-hidden="true">⠿</span>
-    <strong>校园足迹地图</strong><span class="float-hint">拖动移动</span>
+    <strong>校园动物行动轨迹</strong><span class="float-hint">拖动移动</span>
     <button type="button" class="text-button float-restore" data-action="map-toggle" aria-label="还原完整地图">${icon('expand')}还原</button></div>` : '';
   const zoomButtons = `<div class="zoom"><button data-action="zoom-in" aria-label="放大地图">+</button><button data-action="zoom-out" aria-label="缩小地图">−</button></div>`;
   const tools = profile ? '' : `<div class="map-tools">${floating ? '' : zoomButtons}
     ${floating ? '' : `<button type="button" class="map-tool-button" data-action="map-toggle" aria-label="缩成小窗" title="缩成小窗">${icon('window')}</button>`}
   </div>`;
-  return `<div class="map-frame${floating ? ' floating' : ''}" style="${position}" aria-label="校园足迹地图">
+  return `<div class="map-frame${floating ? ' floating' : ''}" style="${position}" aria-label="校园动物行动轨迹">
     ${handle}
     <div class="map-slot"><div class="map-host" data-map="${profile ? 'profile' : 'explore'}"></div></div>
     ${tools}
@@ -277,7 +286,7 @@ function home() {
   return `${state.loadError ? `<p class="empty" role="status">${esc(state.loadError)} <button class="text-button" data-action="refresh">重试</button></p>` : ''}
   <div class="explore-grid">
     <section class="panel">
-      <div class="panel-header"><div><h2>校园足迹地图</h2><p>${mapHint}</p></div></div>
+      <div class="panel-header"><div><h2>校园动物行动轨迹</h2><p>${mapHint}</p></div></div>
       <div class="chips" aria-label="筛选动物类别">${chips.map(([key,name,symbol]) => `<button class="chip" data-action="filter" data-value="${esc(key)}" aria-pressed="${state.filter === key}">${icon(symbol)}${esc(name)}</button>`).join('')}</div>
       <div class="species-filter"><label for="map-species">物种</label><select id="map-species">
         <option value="">全部物种</option>${species.map(name => `<option value="${esc(name)}"${state.species === name ? ' selected' : ''}>${esc(name)}</option>`).join('')}
@@ -315,6 +324,7 @@ function discoverRow(visit) {
     ${attachment}
     <footer class="discover-foot">
       <span class="pill">${icon(categoryIcon(visit.category))}${esc(visit.category)}${sightingSpecies(visit) ? ' · ' + esc(sightingSpecies(visit)) : ''}</span>
+      ${(visit.tags || []).map(tag => `<span class="pill tag-pill">${esc(tag)}</span>`).join('')}
       <span class="discover-area">${icon('pin')}${esc(findArea(visit.area)?.name || '未知地点')}</span>
       ${formatMark(visitFormat(visit), true)}
       ${animal ? `<button class="text-button" data-action="animal" data-value="${esc(animal.id)}">${icon('book')}查看档案</button>` : ''}
@@ -341,8 +351,9 @@ function minePage() {
   const unlockedCount = achievements.filter(([, , , unlocked]) => unlocked).length;
   const personalVisible = state.collectionExpanded ? personal : personal.slice(0, COLLECTION_PAGE);
   const badgesVisible = state.achievementsExpanded ? achievements : achievements.slice(0, COLLECTION_PAGE);
+  const roleLabel = state.coreAdmin ? '核心管理员' : state.admin ? '管理员' : '普通用户';
   const account = state.signedIn ? `<section class="panel mine-panel">
-    <div class="panel-header"><div><h2>账号</h2><p>当前登录：<strong>${esc(state.username)}</strong></p></div>
+    <div class="panel-header"><div><h2>账号</h2><p>当前登录：<strong>${esc(state.username)}</strong> · ${roleLabel}</p></div>
       <button type="button" class="text-button" data-action="logout">退出登录</button></div>
     <div class="account-body">
       <span class="account-avatar">${state.avatar ? `<img src="${esc(state.avatar)}" alt="我的头像">` : icon('person')}</span>
@@ -367,13 +378,14 @@ function minePage() {
   const permissions = `<section class="panel mine-panel">
     <div class="panel-header"><div><h2>设备权限</h2><p>可以按需授权，浏览器会显示相应的权限请求。</p></div></div>
     ${permissionCards()}</section>`;
-  const admin = state.admin ? `<h2 class="mine-group-title">管理员模式</h2>
+  const admin = state.admin ? `<h2 class="mine-group-title">${state.coreAdmin ? '核心管理员' : '管理员'}模式</h2>
   <section class="panel mine-panel">
-    <div class="panel-header"><div><h2>管理员模式</h2><p>内容管理与审核员管理。</p></div></div>
+    <div class="panel-header"><div><h2>${state.coreAdmin ? '核心管理员' : '管理员'}模式</h2><p>内容管理、修改申请审核与权限管理。</p></div></div>
     <div class="admin-actions">
-      ${button('审核权限申请','book','admin-review')}
+      ${button('修改申请审核','book','admin-edit-review')}
       ${button('事件管理','event','admin-events')}
-      ${button('审核员管理','person','admin-reviewers')}
+      ${button('审核权限申请','book','admin-review')}
+      ${state.coreAdmin ? button('用户角色管理','person','admin-users') : ''}
     </div>
   </section>` : '';
   return `<section class="page-title"><h1>我的</h1></section>
@@ -499,22 +511,22 @@ async function decideApplication(decision, id, trigger) {
   }
 }
 
-async function showAdminReviewers() {
-  showDialog('审核员管理', '<p class="empty" role="status">正在加载用户…</p>');
+async function showAdminUsers() {
+  showDialog('用户角色管理', '<p class="empty" role="status">正在加载用户…</p>');
   const opening = modal.querySelector('.empty');
   try {
-    const { users } = await api('admin/reviewers');
+    const { users } = await api('admin/users');
     if (!modal.open || !opening.isConnected) return;
-    showDialog('审核员管理', users.length ? `<div class="review-list">${users.map(user => {
-      const label = user.role === 'admin' ? '管理员' : user.role === 'reviewer' ? '审核员' : '普通用户';
+    showDialog('用户角色管理', users.length ? `<div class="review-list">${users.map(user => {
+      const label = user.role === 'core_admin' ? '核心管理员' : user.role === 'admin' ? '管理员' : '普通用户';
       return `<article>
         <strong>${esc(user.nickname || user.username)}</strong>
         <p>${esc(user.username)} · ${label} · ${formatDate(user.created_at)} 注册</p>
-        ${user.role === 'admin' ? '<p class="hint">管理员由服务器配置指定，不可在此修改。</p>' : user.role === 'reviewer' ?
-          button('取消审核员','close','admin-role','outline',user.username + '|user') :
-          button('设为审核员','star','admin-role','primary',user.username + '|reviewer')}
+        ${user.role === 'core_admin' ? '<p class="hint">核心管理员由服务器配置指定，不可在此修改。</p>' : user.role === 'admin' ?
+          button('取消管理员','close','admin-role','outline',user.username + '|user') :
+          button('设为管理员','star','admin-role','primary',user.username + '|admin')}
       </article>`;
-    }).join('')}</div>` : '<p class="empty">暂无用户。</p>');
+    }).join('')}</div>` : '<p class="empty">暂无用户。</p>', '可将普通用户设为管理员，或将管理员设为普通用户。');
   } catch (error) {
     if (modal.open && opening.isConnected) opening.textContent = error.message;
   }
@@ -524,9 +536,50 @@ async function setUserRole(value, trigger) {
   const [username, role] = value.split('|');
   trigger.disabled = true;
   try {
-    await api('admin/reviewers', { username, role });
-    if (trigger.isConnected) await showAdminReviewers();
-    notify(role === 'reviewer' ? '已设为审核员。' : '已取消审核员。');
+    await api('admin/users', { username, role });
+    if (trigger.isConnected) await showAdminUsers();
+    notify(role === 'admin' ? '已设为管理员。' : '已取消管理员。');
+  } catch (error) {
+    notify(error.message);
+  } finally {
+    trigger.disabled = false;
+  }
+}
+
+async function showAdminEditReview() {
+  showDialog('观察记录修改申请', '<p class="empty" role="status">正在加载申请…</p>');
+  const opening = modal.querySelector('.empty');
+  try {
+    const { edits } = await api('admin/edits');
+    if (!modal.open || !opening.isConnected) return;
+    showDialog('观察记录修改申请', edits.length ? `<div class="review-list">${edits.map(edit => {
+      const payload = edit.payload || {};
+      const areaName = payload.area ? (findArea(payload.area)?.name || payload.area) : '';
+      return `<article>
+        <strong>${esc(areaName)} · ${payload.observedAt ? formatDate(payload.observedAt) : ''}</strong>
+        <p class="hint">申请时间 ${formatDate(edit.created_at)} · 申请人 ${esc(edit.requester || '未知')}</p>
+        <p>标签：${esc((payload.tags || []).join('、') || '无')}</p>
+        <p>关联档案：${esc(payload.match === 'existing' ? '选择已有档案' : payload.match === 'new' ? '建立新档案' : '暂不确定')}</p>
+        <p>观察文字：${esc(payload.note || '无')}</p>
+        <div class="event-actions">
+          ${button('通过','star','admin-edit-approve','primary',edit.id)}
+          ${button('驳回','close','admin-edit-reject','outline',edit.id)}
+        </div>
+      </article>`;
+    }).join('')}</div>` : '<p class="empty">暂无待审核的修改申请。</p>', '通过后修改将应用到观察记录。');
+  } catch (error) {
+    if (modal.open && opening.isConnected) opening.textContent = error.message;
+  }
+}
+
+async function decideEdit(decision, id, trigger) {
+  const wording = { approve: '通过此修改申请', reject: '驳回此修改申请' };
+  if (!window.confirm('确定' + wording[decision] + '？')) return;
+  trigger.disabled = true;
+  try {
+    await api('admin/edits', { decision, id });
+    if (trigger.isConnected) await showAdminEditReview();
+    notify(decision === 'approve' ? '修改已应用到观察记录。' : '修改申请已驳回。');
   } catch (error) {
     notify(error.message);
   } finally {
@@ -561,6 +614,21 @@ async function removeAdminEvent(id, trigger) {
     await api('admin/events', { id });
     if (trigger.isConnected) await showAdminEvents();
     notify('事件记录已删除。');
+  } catch (error) {
+    notify(error.message);
+  } finally {
+    trigger.disabled = false;
+  }
+}
+
+async function removeObservation(id, trigger) {
+  if (!window.confirm('确定删除这条观察记录？该操作不可恢复。')) return;
+  trigger.disabled = true;
+  try {
+    await api('admin/observations', { id });
+    if (modal.open) modal.close();
+    await refresh();
+    notify('观察记录已删除。');
   } catch (error) {
     notify(error.message);
   } finally {
@@ -684,7 +752,7 @@ async function loadAccount() {
     state.nickname = data.nickname || '';
     state.avatar = data.avatar || '';
     state.admin = data.admin === true;
-    state.reviewer = data.reviewer === true;
+    state.coreAdmin = data.coreAdmin === true;
   } catch {
     state.username = '';
   }
@@ -886,7 +954,7 @@ async function logout() {
   state.nickname = '';
   state.avatar = '';
   state.admin = false;
-  state.reviewer = false;
+  state.coreAdmin = false;
   state.me = undefined;
   state.bookmarks = [];
   state.events = null;
@@ -989,6 +1057,8 @@ function showAnimal(animal) {
     ${picture(animal.photo, animal.name, 'profile-photo')}
     <div class="profile-facts">
       <p><strong>类别和物种</strong>　${esc(animal.category)} · ${esc(animal.species || '待确认')}</p>
+      <p><strong>性别</strong>　${esc(animal.gender || '未知')}</p>
+      <p><strong>健康状况</strong>　${esc(animal.health || '待补充')}</p>
       <p><strong>外观特征</strong>　${esc(animal.features || '待补充')}</p>
       <p><strong>性格</strong>　${esc(animal.personality || '待观察')}</p>
       <p><strong>喜好</strong>　${esc(animal.likes || '待观察')}</p>
@@ -1014,14 +1084,22 @@ function showVisit(visit) {
   if (!visit) return;
   const animal = findAnimal(visit.animal_id);
   const title = isEvent(visit) ? visit.kind : (animal?.name || visit.species || visit.category);
+  const tags = visit.tags || [];
+  const pending = state.edits?.some(edit => edit.observation_id === visit.id && edit.status === 'pending');
+  const editLine = isEvent(visit) || visit.demo || !state.signedIn ? '' : pending
+    ? '<p class="hint">你的修改申请正在等待管理员审核。</p>'
+    : button(visit.mine || visit.editable ? '修改这条记录' : '申请修改这条记录', 'edit', 'visit-edit', 'outline', visit.id);
+  const adminDelete = !isEvent(visit) && !visit.demo && state.admin ? button('删除记录', 'close', 'admin-remove-observation', 'outline', visit.id) : '';
   showDialog(title, `
     ${visitAttachment(visit, title)}
     <div class="profile-facts"><p>${formatMark(visitFormat(visit))}</p><p><strong>地点</strong>　${esc(findArea(visit.area)?.name)}</p>
       <p><strong>时间</strong>　${formatDate(visit.observed_at)}</p>
       <p><strong>观察类型</strong>　${esc(visit.kind)}</p>
       <p><strong>动物</strong>　${esc(visit.category)}${sightingSpecies(visit) ? ' · ' + esc(sightingSpecies(visit)) : ''}</p>
+      <p><strong>标签</strong>　${tags.length ? tags.map(tag => esc(tag)).join('、') : '暂无标签'}</p>
       <p><strong>观察备注</strong>　${esc(visit.note || '暂无备注')}</p></div>
     ${animal ? button('查看动物档案','book','animal','primary',animal.id) : ''}
+    ${editLine || adminDelete ? `<div class="visit-actions">${editLine}${adminDelete}</div>` : ''}
   `, visit.demo ? '示例观察' : '校园观察');
 }
 
@@ -1030,6 +1108,13 @@ function showEdit(animal) {
   showDialog('编辑动物档案', `<form class="form" id="edit-profile" data-id="${esc(animal.id)}">
     <label class="field"><span>名称</span><input name="name" value="${esc(animal.name)}" required maxlength="40"></label>
     <label class="field"><span>物种（选填）</span><input name="species" value="${esc(animal.species)}" maxlength="60" list="edit-species"><datalist id="edit-species">${options(speciesFor(animal.category).map(name => [name,name]))}</datalist></label>
+    <label class="field"><span>性别</span><select name="gender">
+      <option value="" ${animal.gender ? '' : 'selected'}>未知</option>
+      <option value="公" ${animal.gender === '公' ? 'selected' : ''}>公</option>
+      <option value="母" ${animal.gender === '母' ? 'selected' : ''}>母</option>
+      ${animal.gender && !['公','母'].includes(animal.gender) ? `<option value="${esc(animal.gender)}" selected>${esc(animal.gender)}</option>` : ''}
+    </select></label>
+    <label class="field"><span>健康状况（选填）</span><input name="health" value="${esc(animal.health)}" maxlength="200" placeholder="例如：已绝育，暂无疾病"></label>
     <label class="field"><span>外观特征</span><input name="features" value="${esc(animal.features)}" maxlength="180"></label>
     <label class="field"><span>性格</span><textarea name="personality" maxlength="140">${esc(animal.personality)}</textarea></label>
     <label class="field"><span>喜好</span><textarea name="likes" maxlength="140">${esc(animal.likes)}</textarea></label>
@@ -1047,7 +1132,20 @@ function showRecord(preselected, mode = 'observation') {
   const create = mode === 'animal';
   if (!state.signedIn) return showLogin();
   const selected = findAnimal(preselected);
-  formState = { id: randomId(), photo:'', format:incident || create ? 'photo' : 'text', imageVersion:0, pending:false };
+  formState = { id: randomId(), photo:'', format:incident || create ? 'photo' : 'text', imageVersion:0, pending:false, selectedTags: [], category: '' };
+  const tagField = incident || create ? '' : `<div class="field tag-field">
+    <span>标签（选填，可多选）</span>
+    <div class="tag-chips" id="tag-chips"></div>
+    <div class="tag-add-row"><input id="tag-input" maxlength="30" placeholder="新增自定义标签，例如：橘猫"><button type="button" class="button outline" data-action="tag-add">添加</button></div>
+    <p class="hint" id="tag-hint"></p>
+  </div>`;
+  const newAnimalProfile = `<div class="field-pair" id="new-animal-profile" hidden>
+    <label class="field"><span>性别</span><select name="gender">${options(genderOptions)}</select></label>
+    <label class="field"><span>健康状况（选填）</span><input name="health" maxlength="200" placeholder="例如：已绝育"></label>
+    <label class="field"><span>外观特征（选填）</span><input name="features" maxlength="180" placeholder="例如：白色下巴，橘色虎斑"></label>
+    <label class="field"><span>性格（选填）</span><input name="personality" maxlength="140"></label>
+    <label class="field"><span>喜好（选填）</span><input name="likes" maxlength="140"></label>
+  </div>`;
   showDialog(incident ? '记录特殊事件' : create ? '新增动物' : '记录校园观察', `<form class="form" id="record-form" data-mode="${mode}">
     ${incident ? `<div class="event-notice inline-notice"><h3>提交前请阅读</h3>${eventStatements}</div>
     <label class="checkline"><input name="eventConsent" type="checkbox" required>我已阅读说明，并按目击事实提交。</label>` : ''}
@@ -1095,11 +1193,10 @@ function showRecord(preselected, mode = 'observation') {
     `}
     <div class="field-pair">
       <label class="field"><span>动物类别</span><select name="category" ${create ? 'required' : ''}>${options([[create ? '' : '待确认',create ? '请选择类别' : '待确认'], ...categoryNames().filter(name => name !== '待确认').map(category => [category,category]),['__custom','新增类别…']])}</select></label>
-      <label class="field"><span>物种（选填）</span><input name="species" maxlength="60" list="species-options" placeholder="选择或输入物种"><datalist id="species-options"></datalist></label>
+      ${incident || create ? `<label class="field"><span>物种（选填）</span><input name="species" maxlength="60" list="species-options" placeholder="选择或输入物种"><datalist id="species-options"></datalist></label>` : ''}
     </div>
     <label class="field" id="custom-category" hidden><span>新类别名称</span><input name="customCategory" maxlength="30" placeholder="例如：松鼠"></label>
-    ${incident ? '' : `<label class="field"><span>外观特征（选填）</span><input name="features" maxlength="180" placeholder="例如：白色下巴，橘色虎斑"></label>
-    `}
+    ${tagField}
     ${!incident && !create ? `<fieldset><legend>关联动物档案</legend>
       <div class="match-options">
         <label><input type="radio" name="matchMode" value="unknown" checked>暂不确定个体，只保存观察</label>
@@ -1108,9 +1205,15 @@ function showRecord(preselected, mode = 'observation') {
       </div>
       <label class="field" id="existing-animal" hidden><span>选择档案</span><select name="animalId">${options([['','请选择档案'],...state.animals.map(animal => [animal.id, animal.name + ' · ' + animal.category + (animal.demo ? '（示例）' : '')])])}</select></label>
       <label class="field" id="new-animal" hidden><span>动物昵称（选填）</span><input name="name" maxlength="40" placeholder="例如：橘子"></label>
+      ${newAnimalProfile}
     </fieldset>
     ` : ''}
     ${create ? `<div class="field-pair">
+      <label class="field"><span>性别</span><select name="gender">${options(genderOptions)}</select></label>
+      <label class="field"><span>健康状况（选填）</span><input name="health" maxlength="200" placeholder="例如：已绝育，暂无疾病"></label>
+    </div>
+    <label class="field"><span>外观特征（选填）</span><input name="features" maxlength="180" placeholder="例如：白色下巴，橘色虎斑"></label>
+    <div class="field-pair">
       <label class="field"><span>性格（选填）</span><input name="personality" maxlength="140"></label>
       <label class="field"><span>喜好（选填）</span><input name="likes" maxlength="140"></label>
     </div>` : `<label class="field"><span id="observation-note-label">${incident ? '目击情况（选填）' : '观察文字'}</span><textarea name="note" maxlength="400" ${incident ? '' : 'required'} placeholder="${incident ? '请只填写你实际看到的情况' : '它在做什么？'}"></textarea></label>`}
@@ -1132,12 +1235,12 @@ function showRecord(preselected, mode = 'observation') {
     form.elements.matchMode.value = 'existing';
     form.elements.animalId.value = selected.id;
     form.elements.category.value = selected.category;
-    form.elements.species.value = selected.species;
-    form.elements.features.value = selected.features;
+    if (form.elements.species) form.elements.species.value = selected.species;
     updateMatch(form);
   }
   if (incident) form.elements.category.value = '鸟类';
   updateCategory(form);
+  renderTagChips(form);
 }
 
 function updateMatch(form) {
@@ -1145,13 +1248,66 @@ function updateMatch(form) {
   form.querySelector('#existing-animal').hidden = mode !== 'existing';
   form.elements.animalId.required = mode === 'existing';
   form.querySelector('#new-animal').hidden = mode !== 'new';
+  const profile = form.querySelector('#new-animal-profile');
+  if (profile) profile.hidden = mode !== 'new';
 }
 
 function updateCategory(form) {
-  const custom = form.elements.category.value === '__custom';
+  const categorySelect = form.elements.category;
+  if (!categorySelect) return;
+  const custom = categorySelect.value === '__custom';
   form.querySelector('#custom-category').hidden = !custom;
   form.elements.customCategory.required = custom;
-  form.querySelector('#species-options').innerHTML = options(speciesFor(custom ? form.elements.customCategory.value : form.elements.category.value).map(name => [name,name]));
+  const speciesOptions = form.querySelector('#species-options');
+  if (speciesOptions) speciesOptions.innerHTML = options(speciesFor(custom ? form.elements.customCategory.value : categorySelect.value).map(name => [name,name]));
+  formState.category = custom ? (form.elements.customCategory.value.trim() || '__custom') : categorySelect.value;
+  renderTagChips(form);
+}
+
+function renderTagChips(form) {
+  const container = form.querySelector('#tag-chips');
+  if (!container) return;
+  const session = formState;
+  const category = session.category || '';
+  const selected = new Set(session.selectedTags || []);
+  const known = category && category !== '待确认' && category !== '__custom' ? tagPoolFor(category, session.selectedTags || []) : [];
+  container.innerHTML = known.length
+    ? known.map(tag => `<button type="button" class="tag-chip" data-action="tag-toggle" data-value="${esc(tag)}" aria-pressed="${selected.has(tag)}">${esc(tag)}</button>`).join('')
+    : '<span class="hint">暂无预设标签，可在下方添加自定义标签。</span>';
+  const hint = form.querySelector('#tag-hint');
+  if (hint) hint.textContent = category && category !== '待确认' && category !== '__custom'
+    ? `标签按「${category}」类别区分，可多选或添加自定义标签。`
+    : '请先选择动物类别，再选择标签。';
+}
+
+function toggleTag(form, tag) {
+  const session = formState;
+  const set = new Set(session.selectedTags || []);
+  if (set.has(tag)) set.delete(tag);
+  else {
+    if (set.size >= 12) return notify('最多选择 12 个标签。');
+    set.add(tag);
+  }
+  session.selectedTags = [...set];
+  renderTagChips(form);
+}
+
+function addTag(form) {
+  const input = form.querySelector('#tag-input');
+  const value = (input?.value || '').trim().slice(0, 30);
+  if (!value) return;
+  const session = formState;
+  const set = new Set(session.selectedTags || []);
+  if (!set.has(value) && set.size >= 12) return notify('最多选择 12 个标签。');
+  set.add(value);
+  session.selectedTags = [...set];
+  input.value = '';
+  renderTagChips(form);
+}
+
+function localDateTime(value) {
+  const date = new Date(value);
+  return new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
 }
 
 function updateArea(form) {
@@ -1165,6 +1321,75 @@ function updateAreaCustom(form) {
   const custom = !!spot?.custom;
   form.querySelector('#custom-area').hidden = !custom;
   form.elements.customArea.required = custom;
+}
+
+// 修改观察记录：本人或管理员直接修改，他人提交修改申请。
+// 仅允许修改时间、地点、动物标签、关联的动物档案和观察文字。
+function showEditVisit(visit) {
+  if (!state.signedIn) return showLogin();
+  if (!visit || visit.demo || isEvent(visit)) return;
+  const direct = visit.mine || visit.editable;
+  const animal = findAnimal(visit.animal_id);
+  const info = findArea(visit.area);
+  formState = { id: randomId(), photo: '', format: 'edit', imageVersion: 0, pending: false, selectedTags: [...(visit.tags || [])], category: visit.category, editId: visit.id };
+  const noteRequired = visitFormat(visit) === 'text';
+  showDialog(direct ? '修改这条记录' : '申请修改这条记录', `<form class="form" id="record-form" data-mode="edit" data-id="${esc(visit.id)}">
+    <p class="hint">仅可修改时间、地点、动物标签、关联的动物档案和观察文字，照片与记录方式不可修改。</p>
+    <label class="field"><span>观察时间</span><input type="datetime-local" name="observedAt" value="${localDateTime(visit.observed_at)}" required></label>
+    <div class="field-pair">
+      <label class="field"><span>校园区域</span><select name="region" required>${options([['','请选择区域'],...regions.map(region => [region.id,region.name])])}</select></label>
+      <label class="field"><span>具体地点</span><select name="area" required>${options([['','请选择地点'],...(regionOf('upper')?.spots || []).map(spot => [spot.id,spot.name])])}</select></label>
+    </div>
+    <label class="field" id="custom-area" hidden><span>自行填写地点</span><input name="customArea" maxlength="20" placeholder="例如：上园健身房"></label>
+    <div class="upload-actions">${button('使用当前位置','target','locate')}</div>
+    <p id="location-status" class="hint" role="status">浏览器会请求定位授权，记录中仅保存你确认的区域。选择「其它地点」可自行填写。</p>
+    <div class="field tag-field">
+      <span>动物标签（选填，可多选）</span>
+      <div class="tag-chips" id="tag-chips"></div>
+      <div class="tag-add-row"><input id="tag-input" maxlength="30" placeholder="新增自定义标签"><button type="button" class="button outline" data-action="tag-add">添加</button></div>
+      <p class="hint" id="tag-hint"></p>
+    </div>
+    <fieldset><legend>关联动物档案（动物类别：${esc(visit.category)}）</legend>
+      <div class="match-options">
+        <label><input type="radio" name="matchMode" value="unknown" checked>暂不确定个体，只保存观察</label>
+        <label><input type="radio" name="matchMode" value="existing">确认是已记录的动物</label>
+        <label><input type="radio" name="matchMode" value="new">遇到新个体，提交时建立档案</label>
+      </div>
+      <label class="field" id="existing-animal" hidden><span>选择档案</span><select name="animalId">${options([['','请选择档案'],...state.animals.map(animal => [animal.id, animal.name + ' · ' + animal.category + (animal.demo ? '（示例）' : '')])])}</select></label>
+      <label class="field" id="new-animal" hidden><span>动物昵称（选填）</span><input name="name" maxlength="40" placeholder="例如：橘子"></label>
+      <div class="field-pair" id="new-animal-profile" hidden>
+        <label class="field"><span>性别</span><select name="gender">${options(genderOptions)}</select></label>
+        <label class="field"><span>健康状况（选填）</span><input name="health" maxlength="200" placeholder="例如：已绝育"></label>
+        <label class="field"><span>外观特征（选填）</span><input name="features" maxlength="180" placeholder="例如：白色下巴，橘色虎斑"></label>
+        <label class="field"><span>性格（选填）</span><input name="personality" maxlength="140"></label>
+        <label class="field"><span>喜好（选填）</span><input name="likes" maxlength="140"></label>
+      </div>
+    </fieldset>
+    <label class="field"><span>观察文字${noteRequired ? '' : '（选填）'}</span><textarea name="note" maxlength="400" ${noteRequired ? 'required' : ''} placeholder="它在做什么？">${esc(visit.note)}</textarea></label>
+    <p class="error" role="alert" hidden></p>
+    <div class="form-actions"><button type="button" class="button outline" data-action="close">取消</button><button class="button primary" type="submit">${direct ? '确认修改' : '申请修改'}</button></div>
+  </form>`, direct ? '修改后立即生效。' : '提交后由管理员审核，通过后生效。');
+
+  const form = document.querySelector('#record-form');
+  const regionId = info.region || 'other';
+  form.elements.region.value = regionId;
+  updateArea(form);
+  if (info.custom) {
+    const customSpot = (regionOf(regionId)?.spots || []).find(spot => spot.custom);
+    if (customSpot) form.elements.area.value = customSpot.id;
+    form.elements.customArea.value = info.name;
+  } else {
+    form.elements.area.value = areaKey(visit.area) || visit.area;
+  }
+  updateAreaCustom(form);
+  if (animal) {
+    form.elements.matchMode.value = 'existing';
+    form.elements.animalId.value = animal.id;
+  } else if (visit.animal_id) {
+    form.elements.matchMode.value = 'unknown';
+  }
+  updateMatch(form);
+  renderTagChips(form);
 }
 
 async function preparePhoto(file, limit = 1200) {
@@ -1437,12 +1662,32 @@ async function saveObservation(form) {
   try {
     const incident = form.dataset.mode === 'incident';
     const create = form.dataset.mode === 'animal';
+    if (form.dataset.mode === 'edit') {
+      const matchMode = fields.matchMode === 'existing' ? 'existing' : fields.matchMode;
+      if (matchMode === 'existing' && !fields.animalId) return formError(form, '请选择关联的动物档案。');
+      const result = await api('observations/edit', {
+        id: form.dataset.id,
+        observedAt: fields.observedAt ? new Date(fields.observedAt).toISOString() : undefined,
+        area,
+        tags: session.selectedTags || [],
+        note: fields.note,
+        match: matchMode,
+        animalId: matchMode === 'existing' ? fields.animalId : '',
+        name: fields.name, gender: fields.gender, health: fields.health,
+        features: fields.features, personality: fields.personality, likes: fields.likes,
+      });
+      if (modal.open && formState === session) modal.close();
+      await refresh();
+      notify(result.pending ? '修改申请已提交，等待管理员审核。' : '记录已修改。');
+      return;
+    }
     const record = {
       id:session.id, area, kind:incident ? fields.kind : kinds[0], category, species:fields.species, features:fields.features,
       match, name:fields.name, note:fields.note, photo:session.photo, photoConsent:!!fields.photoConsent,
       observedAt:fields.observedAt ? new Date(fields.observedAt).toISOString() : undefined,
       eventConsent:!!fields.eventConsent, personality:fields.personality, likes:fields.likes,
       mediaConsent:!!fields.mediaConsent, format:fields.format,
+      gender:fields.gender, health:fields.health, tags: session.selectedTags || [],
     };
     let body = record;
     if (session.file) {
@@ -1530,11 +1775,18 @@ function placeFloatingMap() {
 }
 
 document.querySelectorAll('[data-icon]').forEach(el => { el.innerHTML = icon(el.dataset.icon); });
+// 记录弹窗是否由指针操作打开：关闭后清除焦点恢复产生的 focus-visible 边框。
+let dialogPointerOpened = false;
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape' && !plusMenu.hidden) closePlusMenu();
+});
 document.addEventListener('click', event => {
   const trigger = event.target.closest('[data-action]');
+  // 加号菜单打开时，点击屏幕任意位置都会收起；点加号本身交给 toggle 处理。
+  if (!plusMenu.hidden && trigger?.dataset.action !== 'plus-menu') closePlusMenu();
   if (!trigger) return;
   const { action, value } = trigger.dataset;
-  if (action !== 'plus-menu') closePlusMenu();
+  dialogPointerOpened = true;
   switch (action) {
     case 'record': showRecord(value); break;
     case 'permission': requestPermission(value, trigger); break;
@@ -1549,9 +1801,17 @@ document.addEventListener('click', event => {
     case 'achievements-expand': state.achievementsExpanded = !state.achievementsExpanded; render(); break;
     case 'admin-review': showEventReview(); break;
     case 'admin-events': showAdminEvents(); break;
-    case 'admin-reviewers': showAdminReviewers(); break;
+    case 'admin-users': showAdminUsers(); break;
+    case 'admin-edit-review': showAdminEditReview(); break;
+    case 'admin-edit-approve': decideEdit('approve', value, trigger); break;
+    case 'admin-edit-reject': decideEdit('reject', value, trigger); break;
     case 'admin-remove-event': removeAdminEvent(value, trigger); break;
+    case 'admin-remove-observation': removeObservation(value, trigger); break;
     case 'admin-role': setUserRole(value, trigger); break;
+    case 'visit-edit': showEditVisit(state.visits.find(visit => visit.id === value)); break;
+    case 'search': notify('搜索功能即将上线。'); break;
+    case 'tag-toggle': toggleTag(document.querySelector('#record-form'), value); break;
+    case 'tag-add': addTag(document.querySelector('#record-form')); break;
     case 'close': modal.close(); break;
     case 'filter': state.filter = value; state.species = ''; state.area = ''; state.allVisits = false; render(); break;
     case 'new-animal': showRecord('', 'animal'); break;
@@ -1672,6 +1932,13 @@ document.addEventListener('submit', event => {
 });
 modal.addEventListener('close', () => {
   if (profileMap) { destroyMap(profileMap); profileMap = null; }
+  // 弹窗由点击打开时，关闭后浏览器会把焦点还给页面元素并可能带上 focus-visible 边框，这里清除。
+  requestAnimationFrame(() => {
+    if (!dialogPointerOpened) return;
+    dialogPointerOpened = false;
+    const active = document.activeElement;
+    if (active && active !== document.body && main.contains(active) && active.matches(':focus-visible')) active.blur();
+  });
   if (!formState) return;
   stopCapture(formState,true);
   if (formState.mediaUrl) URL.revokeObjectURL(formState.mediaUrl);

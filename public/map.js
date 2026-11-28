@@ -1,4 +1,4 @@
-// 校园足迹地图引擎：MapLibre GL JS + OpenFreeMap 矢量瓦片（无需 API Key）。
+// 校园动物行动轨迹地图引擎：MapLibre GL JS + OpenFreeMap 矢量瓦片（无需 API Key）。
 // 底图数据来自 OpenStreetMap，署名由 MapLibre 依据样式元数据自动显示。
 import { regions, areas, legacyAreaIds } from './data.js';
 

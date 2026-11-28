@@ -52,14 +52,14 @@ export function createAuth(db, options = {}) {
   const adoptLegacyUser = (options.adoptLegacyUser || '').trim().toLowerCase();
   const bucket = options.bucket || null;
   const adminList = (options.adminUsernames || '').split(',').map(item => item.trim()).filter(Boolean);
-  const reviewerList = (options.reviewerUsernames || '').split(',').map(item => item.trim()).filter(Boolean);
   const attempts = new Map();
   let checks = 0;
 
-  // 有效角色：环境变量管理员名单 > 数据库 admin > 数据库/环境变量 reviewer > user。
-  const effectiveRole = user => adminList.includes(user.username) ? 'admin'
-    : user.role === 'admin' ? 'admin'
-    : reviewerList.includes(user.username) || user.role === 'reviewer' ? 'reviewer' : 'user';
+  // 用户身份：核心管理员 / 管理员 / 普通用户。
+  // 环境变量管理员名单 > 数据库 core_admin（仅旧本地库存在）> 数据库 admin（管理员）> user。
+  const effectiveRole = user => adminList.includes(user.username) ? 'core_admin'
+    : user.role === 'core_admin' ? 'core_admin'
+    : user.role === 'admin' ? 'admin' : 'user';
 
   async function resolveUser(token) {
     const now = new Date().toISOString();
@@ -200,7 +200,7 @@ export function createAuth(db, options = {}) {
     const role = user?.role || 'user';
     return json({
       signedIn: !!user, username: user?.username || '', nickname: (user?.nickname || user?.username || ''),
-      avatar: user?.avatar || '', role, reviewer: role !== 'user', admin: role === 'admin',
+      avatar: user?.avatar || '', role, admin: role !== 'user', coreAdmin: role === 'core_admin',
     });
   }
 

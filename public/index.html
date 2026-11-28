@@ -16,11 +16,7 @@
     <div class="shell top-inner">
       <a class="brand" href="#home" aria-label="神奇动物在哪里首页"><span class="brand-mark" data-icon="paw"></span><span>神奇动物在哪里<small>CAMPUS WILDLIFE</small></span></a>
       <div class="top-actions">
-        <button type="button" class="top-plus" data-action="plus-menu" aria-label="添加记录" aria-expanded="false" aria-controls="plus-menu"><span data-icon="plus"></span></button>
-        <div class="plus-menu" id="plus-menu" hidden>
-          <button type="button" class="plus-item" data-action="record"><span data-icon="camera"></span>记录观察</button>
-          <button type="button" class="plus-item" data-action="event-record"><span data-icon="event"></span>记录特殊事件</button>
-        </div>
+        <button type="button" class="top-plus" data-action="search" aria-label="搜索" title="搜索（即将上线）"><span data-icon="search"></span></button>
       </div>
     </div>
   </header>
@@ -32,6 +28,13 @@
   <nav class="tabbar" aria-label="主导航">
     <a href="#home" data-tab="home"><span class="tab-icon" data-icon="home"></span>首页</a>
     <a href="#animals" data-tab="animals"><span class="tab-icon" data-icon="book"></span>动物档案</a>
+    <div class="tab-plus-wrap">
+      <button type="button" class="tab-plus" data-action="plus-menu" aria-label="添加记录" aria-expanded="false" aria-controls="plus-menu"><span data-icon="plus"></span></button>
+      <div class="plus-menu" id="plus-menu" hidden>
+        <button type="button" class="plus-item" data-action="record"><span data-icon="camera"></span>记录观察</button>
+        <button type="button" class="plus-item" data-action="event-record"><span data-icon="event"></span>记录特殊事件</button>
+      </div>
+    </div>
     <a href="#discover" data-tab="discover"><span class="tab-icon" data-icon="discover"></span>发现</a>
     <a href="#mine" data-tab="mine"><span class="tab-icon" data-icon="person"></span>我的</a>
   </nav>

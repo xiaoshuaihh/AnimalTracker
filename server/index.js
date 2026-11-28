@@ -31,6 +31,30 @@ function field(value, maximum, fallback = '') {
   return typeof value === 'string' ? value.trim().slice(0, maximum) : fallback;
 }
 
+// 标签：字符串数组，去重、裁剪、上限 12 个。
+function parseTags(value) {
+  if (!Array.isArray(value)) return [];
+  return [...new Set(value.filter(item => typeof item === 'string')
+    .map(item => item.trim().slice(0, 30)).filter(Boolean))].slice(0, 12);
+}
+
+const storedTags = value => {
+  try {
+    const parsed = JSON.parse(value || '[]');
+    return Array.isArray(parsed) ? parsed.filter(tag => typeof tag === 'string') : [];
+  } catch {
+    return [];
+  }
+};
+
+const storedJson = value => {
+  try {
+    return JSON.parse(value);
+  } catch {
+    return {};
+  }
+};
+
 function requireViewer(request) {
   const viewer = request.headers.get('oai-authenticated-user-id');
   if (!viewer) throw new RequestError(401, '请先登录，再发布记录或收藏档案。');
@@ -100,20 +124,24 @@ async function payload(request) {
   }
 }
 
-const animalFields = 'id, name, category, species, features, personality, likes, photo';
-const visitFields = 'id, animal_id, category, species, area, kind, note, photo, observed_at, media, media_type';
+const animalFields = 'id, name, category, species, features, personality, likes, gender, health, photo';
+const visitFields = 'id, animal_id, category, species, area, kind, note, photo, observed_at, media, media_type, tags';
 
 async function bootstrap(request, env) {
   const viewer = request.headers.get('oai-authenticated-user-id') || '';
-  const [animals, visits, bookmarks] = await env.DB.batch([
-    env.DB.prepare(`SELECT ${animalFields}, (owner = ?) AS editable FROM public_animals ORDER BY creation_order DESC`).bind(viewer),
-    env.DB.prepare(`SELECT o.id, o.animal_id, o.category, o.species, o.area, o.kind, o.note, o.photo, o.observed_at, o.media, o.media_type, (o.owner = ?) AS mine,
+  const admin = viewerRole(request, env) !== 'user';
+  const [animals, visits, bookmarks, edits] = await env.DB.batch([
+    env.DB.prepare(`SELECT ${animalFields}, (owner = ? OR ? = 1) AS editable FROM public_animals ORDER BY creation_order DESC`).bind(viewer, Number(admin)),
+    env.DB.prepare(`SELECT o.id, o.animal_id, o.category, o.species, o.area, o.kind, o.note, o.photo, o.observed_at, o.media, o.media_type, o.tags, (o.owner = ?) AS mine, (o.owner = ? OR ? = 1) AS editable,
       COALESCE(NULLIF(u.nickname, ''), u.username) AS author, COALESCE(u.avatar, '') AS author_avatar
-      FROM observations o LEFT JOIN users u ON u.id = o.owner WHERE o.kind = ? ORDER BY o.observed_at DESC, o.rowid DESC`).bind(viewer, kinds[0]),
+      FROM observations o LEFT JOIN users u ON u.id = o.owner WHERE o.kind = ? ORDER BY o.observed_at DESC, o.rowid DESC`).bind(viewer, viewer, Number(admin), kinds[0]),
     env.DB.prepare('SELECT animal_id FROM bookmarks WHERE owner = ?').bind(viewer),
+    env.DB.prepare("SELECT observation_id, status FROM observation_edits WHERE requester = ? AND status = 'pending'").bind(viewer),
   ]);
   return json({
-    animals: animals.results, visits: visits.results, bookmarks: bookmarks.results.map(row => row.animal_id).filter(id => sampleIds.has(id) || animals.results.some(animal => animal.id === id)),
+    animals: animals.results, visits: visits.results.map(visit => ({ ...visit, tags: storedTags(visit.tags) })),
+    bookmarks: bookmarks.results.map(row => row.animal_id).filter(id => sampleIds.has(id) || animals.results.some(animal => animal.id === id)),
+    edits: edits.results,
     fundraisers: fundraiserCatalog(env),
     signedIn: !!viewer, local: !!env.LOCAL_DEMO,
   });
@@ -151,6 +179,7 @@ async function record(request, env, incident = false) {
     return json({ id, animalId: previous.animal_id });
   }
   const match = incident ? 'unknown' : field(input.match, 60);
+  const tags = incident ? [] : parseTags(input.tags);
   let category = field(input.category, 30);
   let species = field(input.species, 60);
   let animalId = null;
@@ -173,15 +202,15 @@ async function record(request, env, incident = false) {
   const media = attachment ? '/media/' + mediaId : '';
   const statements = [];
   if (match === 'new') {
-    statements.push(env.DB.prepare(`INSERT INTO animals (${animalFields}, owner) SELECT ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE NOT EXISTS (SELECT 1 FROM observations WHERE id = ?) ON CONFLICT(id) DO NOTHING`).bind(
+    statements.push(env.DB.prepare(`INSERT INTO animals (${animalFields}, owner) SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE NOT EXISTS (SELECT 1 FROM observations WHERE id = ?) ON CONFLICT(id) DO NOTHING`).bind(
       id, field(input.name, 40) || '未命名的' + category, category, species, field(input.features, 180),
-      field(input.personality, 140), field(input.likes, 140), link, viewer, id,
+      field(input.personality, 140), field(input.likes, 140), field(input.gender, 30), field(input.health, 200), link, viewer, id,
     ));
   } else if (existing && !sampleIds.has(existing.id) && link) {
     statements.push(env.DB.prepare("UPDATE animals SET photo = ? WHERE id = ? AND photo = '' AND NOT EXISTS (SELECT 1 FROM observations WHERE id = ?)").bind(link, animalId, id));
   }
-  statements.push(env.DB.prepare(`INSERT INTO observations (${visitFields}, owner) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO NOTHING`).bind(
-    id, animalId, category, species, area, kind, field(input.note, 400), link, observed.toISOString(), media, attachment?.type || '', viewer,
+  statements.push(env.DB.prepare(`INSERT INTO observations (${visitFields}, owner) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO NOTHING`).bind(
+    id, animalId, category, species, area, kind, field(input.note, 400), link, observed.toISOString(), media, attachment?.type || '', JSON.stringify(tags), viewer,
   ));
   if (photo) await env.BUCKET.put(photoId, photo, { httpMetadata: { contentType: 'image/jpeg' } });
   if (attachment) await env.BUCKET.put(mediaId, await file.arrayBuffer(), { httpMetadata: { contentType: attachment.type } });
@@ -212,13 +241,14 @@ async function bookmark(request, env) {
 
 async function editProfile(request, env) {
   const viewer = requireViewer(request);
+  const admin = isAdmin(request, env);
   const input = await payload(request);
   const id = field(input.id, 60);
   const name = field(input.name, 40);
   if (!name) throw new RequestError(400, '请填写档案名称。');
-  const result = await env.DB.prepare('UPDATE animals SET name = ?, personality = ?, likes = ?, features = ?, species = COALESCE(?, species) WHERE id = ? AND owner = ? AND id IN (SELECT id FROM public_animals)')
-    .bind(name, field(input.personality, 140), field(input.likes, 140), field(input.features, 180), typeof input.species === 'string' ? field(input.species, 60) : null, id, viewer).run();
-  if (!result.meta.changes) throw new RequestError(404, '只有档案创建者可以修改该档案。');
+  const result = await env.DB.prepare('UPDATE animals SET name = ?, personality = ?, likes = ?, features = ?, gender = ?, health = ?, species = COALESCE(?, species) WHERE id = ? AND (owner = ? OR ? = 1) AND id IN (SELECT id FROM public_animals)')
+    .bind(name, field(input.personality, 140), field(input.likes, 140), field(input.features, 180), field(input.gender, 30), field(input.health, 200), typeof input.species === 'string' ? field(input.species, 60) : null, id, viewer, Number(admin)).run();
+  if (!result.meta.changes) throw new RequestError(404, '只有档案创建者或管理员可以修改该档案。');
   return json({ id });
 }
 
@@ -233,32 +263,36 @@ async function createAnimal(request, env) {
   if (photo && input.photoConsent !== true) throw new RequestError(400, '请确认这张照片可公开展示。');
   const photoId = photo ? crypto.randomUUID() : '';
   if (photo) await env.BUCKET.put(photoId, photo, { httpMetadata: { contentType: 'image/jpeg' } });
-  await env.DB.prepare(`INSERT INTO animals (${animalFields}, owner) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).bind(
+  await env.DB.prepare(`INSERT INTO animals (${animalFields}, owner) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).bind(
     id, name, category, field(input.species, 60), field(input.features, 180),
-    field(input.personality, 140), field(input.likes, 140), photo ? '/media/' + photoId : '', viewer,
+    field(input.personality, 140), field(input.likes, 140), field(input.gender, 30), field(input.health, 200), photo ? '/media/' + photoId : '', viewer,
   ).run();
   return json({ id }, 201);
 }
 
+// 用户身份：核心管理员 / 管理员 / 普通用户（已取消审核员）。
+// 核心管理员由服务端 EVENT_ADMIN_USERNAMES 指定（原管理员升级）；管理员由核心管理员在后台设置。
 function viewerRole(request, env) {
   const username = request.headers.get('oai-authenticated-user-name')?.trim();
   const admins = (env.EVENT_ADMIN_USERNAMES || '').split(',').map(item => item.trim()).filter(Boolean);
-  if (username && admins.includes(username)) return 'admin';
-  if (request.headers.get('oai-authenticated-user-role')?.trim() === 'admin') return 'admin';
-  const email = request.headers.get('oai-authenticated-user-email')?.trim().toLowerCase();
-  const emails = (env.EVENT_REVIEWER_EMAILS || '').split(',').map(item => item.trim().toLowerCase()).filter(Boolean);
-  if (email && emails.includes(email)) return 'reviewer';
-  const reviewers = (env.EVENT_REVIEWER_USERNAMES || '').split(',').map(item => item.trim()).filter(Boolean);
-  if (request.headers.get('oai-authenticated-user-role')?.trim() === 'reviewer' || (username && reviewers.includes(username))) return 'reviewer';
+  if (username && admins.includes(username)) return 'core_admin';
+  const role = request.headers.get('oai-authenticated-user-role')?.trim();
+  if (role === 'core_admin') return 'core_admin';
+  if (role === 'admin') return 'admin';
   return 'user';
 }
 
+// 管理员与核心管理员：均可审核事件权限申请、审核修改申请、修改与删除观察记录和动物档案、管理全部事件。
 function canReview(request, env) {
   return viewerRole(request, env) !== 'user';
 }
 
 function isAdmin(request, env) {
-  return viewerRole(request, env) === 'admin';
+  return viewerRole(request, env) !== 'user';
+}
+
+function isCoreAdmin(request, env) {
+  return viewerRole(request, env) === 'core_admin';
 }
 
 async function currentApplication(env, viewer) {
@@ -314,7 +348,7 @@ async function applyEventAccess(request, env) {
 
 async function reviewEventAccess(request, env) {
   const viewer = requireViewer(request);
-  if (!canReview(request, env)) throw new RequestError(403, '此操作需要事件权限审核员身份。');
+  if (!canReview(request, env)) throw new RequestError(403, '此操作需要管理员身份。');
   if (request.method === 'GET') {
     const { results } = await env.DB.prepare(`SELECT request_id, role, affiliation, campus_email, identity_match, status, submitted_at, reviewed_at,
       (account_id = ?) AS own_request FROM event_access_requests ORDER BY submitted_at DESC`).bind(viewer).all();
@@ -355,24 +389,144 @@ async function removeEvent(request, env) {
   return json({ id });
 }
 
-async function adminReviewers(request, env) {
+async function adminUsers(request, env) {
   requireViewer(request);
-  if (!isAdmin(request, env)) throw new RequestError(403, '此操作需要管理员身份。');
+  if (!isCoreAdmin(request, env)) throw new RequestError(403, '此操作需要核心管理员身份。');
+  // 核心管理员由 EVENT_ADMIN_USERNAMES 指定（旧本地库也可能存有 role='core_admin'），
+  // 列表展示与修改校验都按「有效角色」计算。
+  const envAdmins = (env.EVENT_ADMIN_USERNAMES || '').split(',').map(item => item.trim()).filter(Boolean);
+  const effectiveRole = row => envAdmins.includes(row.username) ? 'core_admin'
+    : row.role === 'core_admin' ? 'core_admin' : row.role === 'admin' ? 'admin' : 'user';
   if (request.method === 'GET') {
     const { results } = await env.DB.prepare('SELECT id, username, nickname, role, created_at FROM users ORDER BY created_at DESC LIMIT 500').all();
-    return json({ users: results });
+    return json({ users: results.map(user => ({ ...user, role: effectiveRole(user) })) });
   }
   const input = await payload(request);
   const username = field(input.username).toLowerCase();
   const role = field(input.role);
-  if (!['user','reviewer'].includes(role)) throw new RequestError(400, '请选择有效的角色。');
+  if (!['user', 'admin'].includes(role)) throw new RequestError(400, '请选择有效的角色。');
   if (username === request.headers.get('oai-authenticated-user-name')?.trim()) throw new RequestError(409, '不能修改自己的角色。');
-  const result = await env.DB.prepare('UPDATE users SET role = ? WHERE username = ?').bind(role, username).run();
-  if (!result.meta.changes) throw new RequestError(404, '找不到该用户。');
+  const target = await env.DB.prepare('SELECT username, role FROM users WHERE username = ?').bind(username).first();
+  if (!target) throw new RequestError(404, '找不到该用户。');
+  if (effectiveRole(target) === 'core_admin') throw new RequestError(409, '核心管理员由服务器配置指定，不可在此修改。');
+  await env.DB.prepare('UPDATE users SET role = ? WHERE username = ?').bind(role, username).run();
   return json({ username, role });
 }
 
 const mediaLimit = 25 * 1024 * 1024;
+
+// 校验修改观察记录的字段：仅允许时间、地点、动物标签、关联档案与观察文字。
+function editFields(input, category) {
+  const observed = new Date(input.observedAt);
+  if (typeof input.observedAt !== 'string' || !Number.isFinite(+observed) || +observed > Date.now() + 300_000) throw new RequestError(400, '请检查观察时间。');
+  const area = field(input.area, 120);
+  const customArea = typeof area === 'string' && area.startsWith('custom:') && area.length > 7;
+  if (!(customArea || areas.some(item => item.id === area))) throw new RequestError(400, '请选择校园区域。');
+  const match = ['unknown', 'existing', 'new'].includes(input.match) ? input.match : 'unknown';
+  const fields = {
+    observedAt: observed.toISOString(),
+    area,
+    tags: parseTags(input.tags),
+    note: field(input.note, 400),
+    match,
+    animalId: match === 'existing' ? field(input.animalId, 60) : '',
+    name: field(input.name, 40),
+    features: field(input.features, 180),
+    personality: field(input.personality, 140),
+    likes: field(input.likes, 140),
+    gender: field(input.gender, 30),
+    health: field(input.health, 200),
+  };
+  if (match === 'existing' && !fields.animalId) throw new RequestError(400, '请选择关联的动物档案。');
+  if (match === 'new' && !category) throw new RequestError(400, '请确认动物类别。');
+  return fields;
+}
+
+async function applyObservationEdit(env, id, visit, fields) {
+  let animalId = null;
+  if (fields.match === 'existing') {
+    const existing = samples.find(animal => animal.id === fields.animalId)
+      || await env.DB.prepare('SELECT id FROM public_animals WHERE id = ?').bind(fields.animalId).first();
+    if (!existing) throw new RequestError(404, '找不到选中的动物档案。');
+    animalId = existing.id;
+  } else if (fields.match === 'new') {
+    animalId = crypto.randomUUID();
+    await env.DB.prepare(`INSERT INTO animals (${animalFields}, owner) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).bind(
+      animalId, fields.name || '未命名的' + visit.category, visit.category, visit.species || '', fields.features,
+      fields.personality, fields.likes, fields.gender, fields.health, '', visit.owner,
+    ).run();
+  }
+  await env.DB.prepare('UPDATE observations SET observed_at = ?, area = ?, note = ?, tags = ?, animal_id = ? WHERE id = ?')
+    .bind(fields.observedAt, fields.area, fields.note, JSON.stringify(fields.tags), animalId, id).run();
+  return animalId;
+}
+
+async function editObservation(request, env) {
+  const viewer = requireViewer(request);
+  const input = await payload(request);
+  const id = field(input.id, 45);
+  if (!/^[a-f0-9-]{36}$/.test(id)) throw new RequestError(400, '记录编号有误。');
+  const visit = await env.DB.prepare(`SELECT ${visitFields}, owner FROM observations WHERE id = ? AND kind = ?`).bind(id, kinds[0]).first();
+  if (!visit) throw new RequestError(404, '找不到这条观察记录。');
+  const admin = isAdmin(request, env);
+  const fields = editFields(input, visit.category);
+  // 本人或管理员：直接修改；他人记录：提交修改申请，等待管理员审核。
+  if (admin || visit.owner === viewer) {
+    const animalId = await applyObservationEdit(env, id, visit, fields);
+    return json({ id, pending: false, animalId });
+  }
+  await env.DB.prepare(`INSERT INTO observation_edits (id, observation_id, requester, payload, status, created_at) VALUES (?, ?, ?, ?, 'pending', ?)
+    ON CONFLICT(observation_id, requester) WHERE status = 'pending' DO UPDATE SET payload = excluded.payload, created_at = excluded.created_at`)
+    .bind(crypto.randomUUID(), id, viewer, JSON.stringify(fields), new Date().toISOString()).run();
+  return json({ id, pending: true }, 201);
+}
+
+async function removeObservation(request, env) {
+  requireViewer(request);
+  if (!isAdmin(request, env)) throw new RequestError(403, '此操作需要管理员身份。');
+  const input = await payload(request);
+  const id = field(input.id, 45);
+  const visit = await env.DB.prepare(`SELECT ${visitFields} FROM observations WHERE id = ? AND kind = ?`).bind(id, kinds[0]).first();
+  if (!visit) throw new RequestError(404, '找不到这条观察记录。');
+  await env.DB.batch([
+    env.DB.prepare('DELETE FROM observations WHERE id = ?').bind(id),
+    env.DB.prepare('DELETE FROM observation_edits WHERE observation_id = ?').bind(id),
+  ]);
+  if (visit.photo) await env.BUCKET.delete(visit.photo.slice(7));
+  if (visit.media) await env.BUCKET.delete(visit.media.slice(7));
+  return json({ id });
+}
+async function adminEdits(request, env) {
+  const viewer = requireViewer(request);
+  if (!isAdmin(request, env)) throw new RequestError(403, '此操作需要管理员身份。');
+  if (request.method === 'GET') {
+    const { results } = await env.DB.prepare(`SELECT e.id, e.observation_id, e.payload, e.status, e.created_at,
+      COALESCE(NULLIF(u.nickname, ''), u.username) AS requester
+      FROM observation_edits e LEFT JOIN users u ON u.id = e.requester
+      WHERE e.status = 'pending' ORDER BY e.created_at DESC LIMIT 200`).all();
+    return json({ edits: results.map(edit => ({ ...edit, payload: storedJson(edit.payload) })) });
+  }
+  const input = await payload(request);
+  const decisions = { approve: ['pending', 'approved'], reject: ['pending', 'rejected'] };
+  if (!Object.hasOwn(decisions, input.decision)) throw new RequestError(400, '请选择审核操作。');
+  const [previous, next] = decisions[input.decision];
+  const edit = await env.DB.prepare('SELECT id, observation_id, payload FROM observation_edits WHERE id = ? AND status = ?').bind(field(input.id, 45), previous).first();
+  if (!edit) throw new RequestError(409, '申请已处理，或已被撤回。请刷新列表。');
+  if (next === 'approved') {
+    const visit = await env.DB.prepare(`SELECT ${visitFields}, owner FROM observations WHERE id = ? AND kind = ?`).bind(edit.observation_id, kinds[0]).first();
+    if (!visit) {
+      await env.DB.prepare("UPDATE observation_edits SET status = 'rejected', reviewed_at = ?, reviewed_by = ? WHERE id = ?")
+        .bind(new Date().toISOString(), viewer, edit.id).run();
+      throw new RequestError(409, '该观察记录已不存在，申请已驳回。');
+    }
+    const fields = editFields(storedJson(edit.payload), visit.category);
+    await applyObservationEdit(env, visit.id, visit, fields);
+  }
+  await env.DB.prepare('UPDATE observation_edits SET status = ?, reviewed_at = ?, reviewed_by = ? WHERE id = ?')
+    .bind(next, new Date().toISOString(), viewer, edit.id).run();
+  return json({ status: next });
+}
+
 const profileId = /^[a-z0-9_-]{3,24}$/;
 
 async function recordPayload(request) {
@@ -519,7 +673,7 @@ async function readMedia(request, env, path) {
   }
   const key = path.slice(7);
   const headers = new Headers({
-    'Content-Type': contentType, 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff',
+    'Content-Type': contentType, 'Cache-Control': 'private, max-age=2592000, immutable', 'X-Content-Type-Options': 'nosniff',
     'Accept-Ranges': 'bytes',
   });
   let range;
@@ -555,13 +709,18 @@ export function createHandler(readAsset) {
           if (pathname === '/api/events/review') return await reviewEventAccess(request, env);
           if (/^\/api\/events\/[a-f0-9-]{36}$/.test(pathname)) return await eventDetail(request, env, pathname.slice(12));
           if (pathname === '/api/admin/events') return await adminEventList(request, env);
-          if (pathname === '/api/admin/reviewers') return await adminReviewers(request, env);
+          if (pathname === '/api/admin/users') return await adminUsers(request, env);
+          if (pathname === '/api/admin/edits') return await adminEdits(request, env);
           if (pathname === '/api/me') return await getMyProfile(request, env);
           if (pathname.startsWith('/api/people/')) return await publicPerson(env, pathname.slice(12));
           if (assets.has(pathname)) {
             const [name, type] = assets.get(pathname);
             const body = await readAsset(name);
-            return new Response(typeof body === 'string' ? encoder.encode(body) : body, { headers: { 'Content-Type': type, 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'same-origin' } });
+            // 缓存策略：入口文件不缓存；图片与第三方库缓存一天；脚本样式每次校验，保证更新即时生效。
+            const cache = name === 'index.html' ? 'no-store'
+              : name.startsWith('vendor/') || name.startsWith('assets/') ? 'public, max-age=86400'
+              : 'no-cache';
+            return new Response(typeof body === 'string' ? encoder.encode(body) : body, { headers: { 'Content-Type': type, 'Cache-Control': cache, 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'same-origin' } });
           }
         }
         if (request.method === 'POST') {
@@ -571,8 +730,11 @@ export function createHandler(readAsset) {
           if (pathname === '/api/events/apply') return await applyEventAccess(request, env);
           if (pathname === '/api/events/review') return await reviewEventAccess(request, env);
           if (pathname === '/api/admin/events') return await removeEvent(request, env);
-          if (pathname === '/api/admin/reviewers') return await adminReviewers(request, env);
+          if (pathname === '/api/admin/users') return await adminUsers(request, env);
+          if (pathname === '/api/admin/edits') return await adminEdits(request, env);
+          if (pathname === '/api/admin/observations') return await removeObservation(request, env);
           if (pathname === '/api/observations') return await record(request, env);
+          if (pathname === '/api/observations/edit') return await editObservation(request, env);
           if (pathname === '/api/bookmark') return await bookmark(request, env);
           if (pathname === '/api/profile') return await editProfile(request, env);
         }

@@ -16,7 +16,9 @@ The Chinese University of Hong Kong, Shenzhen
 
 需要 Node.js 24。运行 `npm run dev`，在浏览器打开终端显示的地址。本地与自托管服务器使用用户名密码注册登录的本地账号和 SQLite。托管线上环境使用平台身份、D1 和 R2。照片会在本地重新编码以移除元数据，类别和物种请手动填写。
 
-特殊事件仅向提交者和审核通过的账号展示，照片也受相同访问控制。设置服务端 `EVENT_REVIEWER_EMAILS` 为负责核实身份的审核员登录邮箱（逗号分隔，自托管环境可改用 `EVENT_REVIEWER_USERNAMES` 按登录用户名指定）。管理员由服务端 `EVENT_ADMIN_USERNAMES` 指定，可在「我的 → 管理员模式」中动态设置或取消审核员、查看全部事件并删除不当记录。审核员可以通过、驳回或撤销申请。审核身份本身不授予全量事件查看权，审核员无法审核自己的申请。校内邮箱仅用于审核，审核员应通过校内渠道核实申请者身份。提交事件不会触发救助通知。
+特殊事件仅向提交者和审核通过的账号展示，照片也受相同访问控制。管理员由服务端 `EVENT_ADMIN_USERNAMES` 指定（核心管理员），可在「我的 → 管理员模式」中通过、驳回或撤销事件权限申请、查看全部事件并删除不当记录。核心管理员还可将普通用户设为管理员，或将管理员设为普通用户；除此之外与管理员权限相同。用户身份为「核心管理员」「管理员」「普通用户」三类。校内邮箱仅用于审核，管理员应通过校内渠道核实申请者身份。提交事件不会触发救助通知。
+
+观察记录支持标签（按动物类别区分，可多选或自定义）、动物档案包含性别与健康状况。点击观察记录可「修改这条记录」（本人或管理员直接生效），他人记录可「申请修改这条记录」，由管理员在「我的 → 管理员模式 → 修改申请审核」中通过或驳回；修改仅限时间、地点、动物标签、关联档案和观察文字。管理员可修改和删除任意观察记录与动物档案。
 
 当前轮次通过与 Codex 的自然语言对话确定需求和实现，使用 ImageGen 生成示例图片。真实用户反馈及相应改进待试用后补录。
 
@@ -28,7 +30,9 @@ Select **记录观察** to log a sighting. Optionally add a photo, choose a camp
 
 Use Node.js 24 and run `npm run dev`. Open the address printed in the terminal. Local and self-hosted servers use username/password accounts and SQLite. The hosted application uses managed sign-in, D1 and R2. Photos are re-encoded locally to strip metadata; fill in category and species manually.
 
-Incident records and photos are restricted to their submitters and approved accounts. Configure the server-only `EVENT_REVIEWER_EMAILS` as a comma-separated list of designated reviewers' sign-in emails (self-hosted deployments can use `EVENT_REVIEWER_USERNAMES` to name reviewers by login username). The review role lets a reviewer approve, reject, or revoke applications. It grants no automatic access to all incidents, and reviewers cannot decide their own applications. The campus email is used for review. Reviewers verify affiliations through campus channels. Filing a report does not dispatch help.
+Incident records and photos are restricted to their submitters and approved accounts. Admins are configured server-side with `EVENT_ADMIN_USERNAMES` (core admins). From 「我的 → 管理员模式」 they approve, reject, or revoke access applications, review all incidents and remove inappropriate ones. Core admins can additionally promote regular users to admins or demote admins back to regular users; apart from that, core admins and admins share the same permissions. User roles are 核心管理员 (core admin), 管理员 (admin) and 普通用户 (regular user). The campus email is used for review; admins verify affiliations through campus channels. Filing a report does not dispatch help.
+
+Observation records support tags (per animal category, multi-select or custom) and animal profiles include gender and health status. From an observation's detail dialog you can 修改这条记录 (edit directly for your own records; admins can edit any record) or 申请修改这条记录 (a modification request for other people's records), which admins review in 「我的 → 管理员模式 → 修改申请审核」. Edits are limited to time, location, tags, the linked profile and the observation text. Admins can modify and delete any observation record and animal profile.
 
 This iteration used natural-language collaboration with Codex and generated sample imagery with ImageGen. Feedback from real users and corresponding changes will be added after testing.
 
