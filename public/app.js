@@ -1147,7 +1147,7 @@ function showRecord(preselected, mode = 'observation') {
   const selected = findAnimal(preselected);
   formState = { id: randomId(), photo:'', format:incident || create ? 'photo' : 'text', imageVersion:0, pending:false };
   const tagField = incident ? '' : `<div class="field tag-field">
-    <span>标签（选填，可多选）</span>
+    <span id="tag-label">标签（选填，可多选）</span>
     <div class="tag-chips" id="tag-chips"></div>
     <div class="tag-add-row"><input id="tag-input" maxlength="30" placeholder="新增自定义标签，例如：橘猫"><button type="button" class="button outline" data-action="tag-add">添加</button></div>
     <p class="hint" id="tag-hint"></p>
@@ -1209,18 +1209,18 @@ function showRecord(preselected, mode = 'observation') {
       ${incident ? `<label class="field"><span>物种（选填）</span><input name="species" maxlength="60" list="species-options" placeholder="选择或输入物种"><datalist id="species-options"></datalist></label>` : ''}
     </div>
     <label class="field" id="custom-category" hidden><span>新类别名称</span><input name="customCategory" maxlength="30" placeholder="例如：松鼠"></label>
-    ${tagField}
     ${!incident && !create ? `<fieldset><legend>关联动物档案</legend>
       <div class="match-options">
         <label><input type="radio" name="matchMode" value="unknown" checked>暂不确定个体，只保存观察</label>
         <label><input type="radio" name="matchMode" value="existing">确认是已记录的动物</label>
         <label><input type="radio" name="matchMode" value="new">遇到新个体，提交时建立档案</label>
       </div>
-      <label class="field" id="existing-animal" hidden><span>选择档案</span><select name="animalId">${options([['','请选择档案'],...state.animals.map(animal => [animal.id, animal.name + ' · ' + animal.category + (animal.demo ? '（示例）' : '')])])}</select></label>
+      <label class="field" id="existing-animal" hidden><span>选择档案</span><select name="animalId">${options([['','请选择档案']])}</select></label>
       <label class="field" id="new-animal" hidden><span>动物昵称（选填）</span><input name="name" maxlength="40" placeholder="例如：橘子"></label>
       ${newAnimalProfile}
     </fieldset>
     ` : ''}
+    ${tagField}
     ${create ? `<div class="field-pair">
       <label class="field"><span>性别</span><select name="gender">${options(genderOptions)}</select></label>
       <label class="field"><span>健康状况（选填）</span><input name="health" maxlength="200" placeholder="例如：已绝育，暂无疾病"></label>
@@ -1246,13 +1246,16 @@ function showRecord(preselected, mode = 'observation') {
   }
   if (selected) {
     form.elements.matchMode.value = 'existing';
-    form.elements.animalId.value = selected.id;
     form.elements.category.value = selected.category;
     if (form.elements.species) form.elements.species.value = selected.species;
-    updateMatch(form);
   }
   if (incident) form.elements.category.value = '鸟类';
   updateCategory(form);
+  if (selected) {
+    // 等类别过滤后的档案下拉重建完成后，再选中档案并锁定标签。
+    form.elements.animalId.value = selected.id;
+    updateMatch(form);
+  }
   renderTagChips(form);
 }
 
@@ -1263,6 +1266,14 @@ function updateMatch(form) {
   form.querySelector('#new-animal').hidden = mode !== 'new';
   const profile = form.querySelector('#new-animal-profile');
   if (profile) profile.hidden = mode !== 'new';
+  // 选定「已记录的动物」后，标签栏固定为该档案的标签，不得增加或删改。
+  const tags = tagsOf(form);
+  if (mode === 'existing' && form.elements.animalId.value) {
+    tags.locked = (findAnimal(form.elements.animalId.value)?.tags || []).slice();
+  } else {
+    tags.locked = null;
+  }
+  renderTagChips(form);
 }
 
 function updateCategory(form) {
@@ -1273,7 +1284,19 @@ function updateCategory(form) {
   form.elements.customCategory.required = custom;
   const speciesOptions = form.querySelector('#species-options');
   if (speciesOptions) speciesOptions.innerHTML = options(speciesFor(custom ? form.elements.customCategory.value : categorySelect.value).map(name => [name,name]));
-  tagsOf(form).category = custom ? (form.elements.customCategory.value.trim() || '__custom') : categorySelect.value;
+  const effective = custom ? (form.elements.customCategory.value.trim() || '__custom') : categorySelect.value;
+  tagsOf(form).category = effective;
+  // 已记录动物下拉只显示当前类别的档案；类别变化时清掉不再匹配的选择。
+  const animalSelect = form.querySelector('#existing-animal select');
+  if (animalSelect) {
+    const current = animalSelect.value;
+    const matching = state.animals.filter(animal => animal.category === effective);
+    animalSelect.innerHTML = options([['', '请选择档案'], ...matching.map(animal => [animal.id, animal.name + (animal.demo ? '（示例）' : '')])]);
+    if (current && !matching.some(animal => animal.id === current)) {
+      animalSelect.value = '';
+      tagsOf(form).locked = null;
+    }
+  }
   renderTagChips(form);
 }
 
@@ -1281,16 +1304,26 @@ function renderTagChips(form) {
   const container = form.querySelector('#tag-chips');
   if (!container) return;
   const tags = tagsOf(form);
+  const locked = Array.isArray(tags.locked);
   const category = tags.category || '';
-  const selected = new Set(tags.selected);
-  const known = category && category !== '待确认' && category !== '__custom' ? tagPoolFor(category, tags.selected) : [];
+  const source = locked ? tags.locked : tags.selected;
+  const selected = new Set(source);
+  const known = locked ? source
+    : (category && category !== '待确认' && category !== '__custom' ? tagPoolFor(category, source) : []);
   container.innerHTML = known.length
-    ? known.map(tag => `<button type="button" class="tag-chip" data-action="tag-toggle" data-value="${esc(tag)}" aria-pressed="${selected.has(tag)}">${esc(tag)}</button>`).join('')
-    : '<span class="hint">暂无预设标签，可在下方添加自定义标签。</span>';
+    ? known.map(tag => `<button type="button" class="tag-chip" data-action="tag-toggle" data-value="${esc(tag)}" aria-pressed="${selected.has(tag)}"${locked ? ' disabled' : ''}>${esc(tag)}</button>`).join('')
+    : `<span class="hint">${locked ? '该档案暂无标签。' : '暂无预设标签，可在下方添加自定义标签。'}</span>`;
+  const addRow = form.querySelector('.tag-add-row');
   const hint = form.querySelector('#tag-hint');
-  if (hint) hint.textContent = category && category !== '待确认' && category !== '__custom'
-    ? `标签按「${category}」类别区分，可多选或添加自定义标签。`
-    : '请先选择动物类别，再选择标签。';
+  if (addRow) addRow.hidden = locked;
+  if (hint) {
+    hint.hidden = locked;
+    if (!locked) hint.textContent = category && category !== '待确认' && category !== '__custom'
+      ? `标签按「${category}」类别区分，可多选或添加自定义标签。`
+      : '请先选择动物类别，再选择标签。';
+  }
+  const label = form.querySelector('#tag-label');
+  if (label) label.textContent = locked ? '标签（来自动物档案，不可修改）' : '标签（选填，可多选）';
 }
 
 // 每个表单独立保存标签选择（记录表单、修改表单、档案编辑表单各不干扰）。
@@ -1362,19 +1395,13 @@ function showEditVisit(visit) {
     <label class="field" id="custom-area" hidden><span>自行填写地点</span><input name="customArea" maxlength="20" placeholder="例如：上园健身房"></label>
     <div class="upload-actions">${button('使用当前位置','target','locate')}</div>
     <p id="location-status" class="hint" role="status">浏览器会请求定位授权，记录中仅保存你确认的区域。选择「其它地点」可自行填写。</p>
-    <div class="field tag-field">
-      <span>动物标签（选填，可多选）</span>
-      <div class="tag-chips" id="tag-chips"></div>
-      <div class="tag-add-row"><input id="tag-input" maxlength="30" placeholder="新增自定义标签"><button type="button" class="button outline" data-action="tag-add">添加</button></div>
-      <p class="hint" id="tag-hint"></p>
-    </div>
     <fieldset><legend>关联动物档案（动物类别：${esc(visit.category)}）</legend>
       <div class="match-options">
         <label><input type="radio" name="matchMode" value="unknown" checked>暂不确定个体，只保存观察</label>
         <label><input type="radio" name="matchMode" value="existing">确认是已记录的动物</label>
         <label><input type="radio" name="matchMode" value="new">遇到新个体，提交时建立档案</label>
       </div>
-      <label class="field" id="existing-animal" hidden><span>选择档案</span><select name="animalId">${options([['','请选择档案'],...state.animals.map(animal => [animal.id, animal.name + ' · ' + animal.category + (animal.demo ? '（示例）' : '')])])}</select></label>
+      <label class="field" id="existing-animal" hidden><span>选择档案</span><select name="animalId">${options([['','请选择档案'],...state.animals.filter(animal => animal.category === visit.category).map(animal => [animal.id, animal.name + (animal.demo ? '（示例）' : '')])])}</select></label>
       <label class="field" id="new-animal" hidden><span>动物昵称（选填）</span><input name="name" maxlength="40" placeholder="例如：橘子"></label>
       <div class="field-pair" id="new-animal-profile" hidden>
         <label class="field"><span>性别</span><select name="gender">${options(genderOptions)}</select></label>
@@ -1384,6 +1411,12 @@ function showEditVisit(visit) {
         <label class="field"><span>喜好（选填）</span><input name="likes" maxlength="140"></label>
       </div>
     </fieldset>
+    <div class="field tag-field">
+      <span id="tag-label">标签（选填，可多选）</span>
+      <div class="tag-chips" id="tag-chips"></div>
+      <div class="tag-add-row"><input id="tag-input" maxlength="30" placeholder="新增自定义标签"><button type="button" class="button outline" data-action="tag-add">添加</button></div>
+      <p class="hint" id="tag-hint"></p>
+    </div>
     <label class="field"><span>观察文字${noteRequired ? '' : '（选填）'}</span><textarea name="note" maxlength="400" ${noteRequired ? 'required' : ''} placeholder="它在做什么？">${esc(visit.note)}</textarea></label>
     <p class="error" role="alert" hidden></p>
     <div class="form-actions"><button type="button" class="button outline" data-action="close">取消</button><button class="button primary" type="submit">${direct ? '确认修改' : '申请修改'}</button></div>
@@ -1690,7 +1723,7 @@ async function saveObservation(form) {
         id: form.dataset.id,
         observedAt: fields.observedAt ? new Date(fields.observedAt).toISOString() : undefined,
         area,
-        tags: tagsOf(form).selected,
+        tags: Array.isArray(tagsOf(form).locked) ? tagsOf(form).locked : tagsOf(form).selected,
         note: fields.note,
         match: matchMode,
         animalId: matchMode === 'existing' ? fields.animalId : '',
@@ -1708,7 +1741,7 @@ async function saveObservation(form) {
       observedAt:fields.observedAt ? new Date(fields.observedAt).toISOString() : undefined,
       eventConsent:!!fields.eventConsent, personality:fields.personality, likes:fields.likes,
       mediaConsent:!!fields.mediaConsent, format:fields.format,
-      gender:fields.gender, health:fields.health, tags: tagsOf(form).selected,
+      gender:fields.gender, health:fields.health, tags: Array.isArray(tagsOf(form).locked) ? tagsOf(form).locked : tagsOf(form).selected,
     };
     let body = record;
     if (session.file) {
@@ -1887,6 +1920,7 @@ document.addEventListener('change', event => {
   if (field.name === 'format') { setObservationFormat(form); return; }
   if (field.type === 'file') { setPhoto(form, field.files[0]); field.value = ''; }
   if (field.name === 'matchMode') { formState.autoChoice = true; updateMatch(form); }
+  if (field.name === 'animalId') updateMatch(form);
   if (field.name === 'category' || field.name === 'customCategory') updateCategory(form);
   if (field.name === 'region') updateArea(form);
   if (field.name === 'area') updateAreaCustom(form);

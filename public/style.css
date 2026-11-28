@@ -328,6 +328,8 @@ audio.av-preview,.observation-audio{display:block;width:100%;max-width:400px;mar
 .tag-chip{border:1px solid var(--line);border-radius:30px;background:#fff;font-size:13px;font-weight:650;padding:5px 11px;min-height:31px}
 .tag-chip:hover{background:var(--soft)}
 .tag-chip[aria-pressed=true]{color:#fff;background:var(--forest);border-color:var(--forest)}
+.tag-chip:disabled{cursor:default;opacity:.9}
+.tag-chip:disabled:hover{background:var(--forest)}
 .tag-add-row{display:flex;gap:6px;margin-top:8px}
 .tag-add-row input{flex:1;min-width:0;border:1px solid #cddbcf;border-radius:8px;background:#fff;color:inherit;padding:9px 10px;min-height:41px}
 .tag-add-row .button{min-height:41px}
