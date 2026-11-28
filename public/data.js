@@ -112,10 +112,10 @@ export const areaRegion = id => {
 };
 
 export const samples = [
-  { id: 'demo-orange', name: '橘子', category: '猫', species: '家猫', features: '橘色虎斑，白色下巴', personality: '下午常独自晒太阳。', likes: '图书馆外的石阶和太阳。', photo: '/assets/cat.jpg', demo: true },
-  { id: 'demo-bulbul', name: '小红帽', category: '鸟类', species: '红耳鹎', features: '黑色冠羽，眼后有红斑', personality: '多在枝头活动。', likes: '树冠茂密的湖边。', photo: '/assets/bird.jpg', demo: true },
-  { id: 'demo-bulbul-white', name: '白头鹎观察档案', category: '鸟类', species: '白头鹎', features: '后头部有白斑，背部略带绿色', personality: '', likes: '', photo: '', demo: true },
-  { id: 'demo-dog', name: '布丁', category: '狗', species: '家犬', features: '浅棕色背部，白色胸口', personality: '平时在安静的地方休息。', likes: '书院外的草地。', photo: '/assets/dog.jpg', demo: true },
+  { id: 'demo-orange', name: '橘子', category: '猫', species: '家猫', tags: ['橘猫', '短毛猫'], features: '橘色虎斑，白色下巴', personality: '下午常独自晒太阳。', likes: '图书馆外的石阶和太阳。', photo: '/assets/cat.jpg', demo: true },
+  { id: 'demo-bulbul', name: '小红帽', category: '鸟类', species: '红耳鹎', tags: ['彩色羽毛'], features: '黑色冠羽，眼后有红斑', personality: '多在枝头活动。', likes: '树冠茂密的湖边。', photo: '/assets/bird.jpg', demo: true },
+  { id: 'demo-bulbul-white', name: '白头鹎观察档案', category: '鸟类', species: '白头鹎', tags: ['白羽'], features: '后头部有白斑，背部略带绿色', personality: '', likes: '', photo: '', demo: true },
+  { id: 'demo-dog', name: '布丁', category: '狗', species: '家犬', tags: ['黄狗'], features: '浅棕色背部，白色胸口', personality: '平时在安静的地方休息。', likes: '书院外的草地。', photo: '/assets/dog.jpg', demo: true },
 ];
 
 export const sampleVisits = [

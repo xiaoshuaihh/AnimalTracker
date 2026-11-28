@@ -108,6 +108,8 @@ const placementLabel = id => {
   return findArea(id).name;
 };
 const sightingSpecies = visit => findAnimal(visit.animal_id)?.species || visit.species;
+// 展示用：优先显示档案的第一个标签，其次历史物种快照。
+const sightingTag = visit => (findAnimal(visit.animal_id)?.tags || [])[0] || sightingSpecies(visit);
 const isEvent = visit => visit.kind !== kinds[0];
 const categoryIcon = name => Object.hasOwn(animalIcons, name) ? animalIcons[name] : 'paw';
 const categoryNames = () => [...new Set([...categories, ...state.animals.map(animal => animal.category), ...state.visits.map(visit => visit.category)])];
@@ -261,7 +263,7 @@ function animalCard(animal) {
     <button type="button" class="card-open" data-action="animal" data-value="${esc(animal.id)}">
       ${picture(animal.photo, animal.name, 'cover')}
       <span class="pill card-tag">${esc(animal.category)}${animal.demo ? ' · 示例' : ''}</span>
-      <span class="card-body" style="display:block"><strong>${esc(animal.name)}</strong><small>${esc(animal.species || '物种待确认')} · ${count} 次观察</small></span>
+      <span class="card-body" style="display:block"><strong>${esc(animal.name)}</strong><small>${esc((animal.tags || [])[0] || '暂无标签')} · ${count} 次观察</small></span>
     </button>
     <button type="button" class="save-button" aria-label="${saved ? '取消收藏' : '收藏'}${esc(animal.name)}" aria-pressed="${saved}" data-action="bookmark" data-value="${esc(animal.id)}">${icon('bookmark')}</button>
   </article>`;
@@ -324,7 +326,7 @@ function discoverRow(visit) {
     ${visit.note ? `<p class="discover-note">${esc(visit.note)}</p>` : ''}
     ${attachment}
     <footer class="discover-foot">
-      <span class="pill">${icon(categoryIcon(visit.category))}${esc(visit.category)}${sightingSpecies(visit) ? ' · ' + esc(sightingSpecies(visit)) : ''}</span>
+      <span class="pill">${icon(categoryIcon(visit.category))}${esc(visit.category)}${sightingTag(visit) ? ' · ' + esc(sightingTag(visit)) : ''}</span>
       ${(visit.tags || []).map(tag => `<span class="pill tag-pill">${esc(tag)}</span>`).join('')}
       <span class="discover-area">${icon('pin')}${esc(findArea(visit.area)?.name || '未知地点')}</span>
       ${formatMark(visitFormat(visit), true)}
@@ -1057,7 +1059,8 @@ function showAnimal(animal) {
   showDialog(animal.name, `
     ${picture(animal.photo, animal.name, 'profile-photo')}
     <div class="profile-facts">
-      <p><strong>类别和物种</strong>　${esc(animal.category)} · ${esc(animal.species || '待确认')}</p>
+      <p><strong>类别</strong>　${esc(animal.category)}</p>
+      <p><strong>标签</strong>　${(animal.tags || []).length ? animal.tags.map(tag => esc(tag)).join('、') : '暂无标签'}</p>
       <p><strong>性别</strong>　${esc(animal.gender || '未知')}</p>
       <p><strong>健康状况</strong>　${esc(animal.health || '待补充')}</p>
       <p><strong>外观特征</strong>　${esc(animal.features || '待补充')}</p>
@@ -1096,7 +1099,7 @@ function showVisit(visit) {
     <div class="profile-facts"><p>${formatMark(visitFormat(visit))}</p><p><strong>地点</strong>　${esc(findArea(visit.area)?.name)}</p>
       <p><strong>时间</strong>　${formatDate(visit.observed_at)}</p>
       <p><strong>观察类型</strong>　${esc(visit.kind)}</p>
-      <p><strong>动物</strong>　${esc(visit.category)}${sightingSpecies(visit) ? ' · ' + esc(sightingSpecies(visit)) : ''}</p>
+      <p><strong>动物</strong>　${esc(visit.category)}${sightingTag(visit) ? ' · ' + esc(sightingTag(visit)) : ''}</p>
       <p><strong>标签</strong>　${tags.length ? tags.map(tag => esc(tag)).join('、') : '暂无标签'}</p>
       <p><strong>观察备注</strong>　${esc(visit.note || '暂无备注')}</p></div>
     ${animal ? button('查看动物档案','book','animal','primary',animal.id) : ''}
@@ -1108,7 +1111,12 @@ function showEdit(animal) {
   if (!animal?.editable) return;
   showDialog('编辑动物档案', `<form class="form" id="edit-profile" data-id="${esc(animal.id)}">
     <label class="field"><span>名称</span><input name="name" value="${esc(animal.name)}" required maxlength="40"></label>
-    <label class="field"><span>物种（选填）</span><input name="species" value="${esc(animal.species)}" maxlength="60" list="edit-species"><datalist id="edit-species">${options(speciesFor(animal.category).map(name => [name,name]))}</datalist></label>
+    <div class="field tag-field">
+      <span>标签（选填，可多选）</span>
+      <div class="tag-chips" id="tag-chips"></div>
+      <div class="tag-add-row"><input id="tag-input" maxlength="30" placeholder="新增自定义标签"><button type="button" class="button outline" data-action="tag-add">添加</button></div>
+      <p class="hint" id="tag-hint"></p>
+    </div>
     <label class="field"><span>性别</span><select name="gender">
       <option value="" ${animal.gender ? '' : 'selected'}>未知</option>
       <option value="公" ${animal.gender === '公' ? 'selected' : ''}>公</option>
@@ -1121,6 +1129,10 @@ function showEdit(animal) {
     <label class="field"><span>喜好</span><textarea name="likes" maxlength="140">${esc(animal.likes)}</textarea></label>
     <p class="error" role="alert" hidden></p><div class="form-actions"><button class="button primary">保存档案</button></div>
   </form>`);
+  const form = document.querySelector('#edit-profile');
+  tagsOf(form).selected = [...(animal.tags || [])];
+  tagsOf(form).category = animal.category;
+  renderTagChips(form);
 }
 
 function localDateInput() {
@@ -1133,8 +1145,8 @@ function showRecord(preselected, mode = 'observation') {
   const create = mode === 'animal';
   if (!state.signedIn) return showLogin();
   const selected = findAnimal(preselected);
-  formState = { id: randomId(), photo:'', format:incident || create ? 'photo' : 'text', imageVersion:0, pending:false, selectedTags: [], category: '' };
-  const tagField = incident || create ? '' : `<div class="field tag-field">
+  formState = { id: randomId(), photo:'', format:incident || create ? 'photo' : 'text', imageVersion:0, pending:false };
+  const tagField = incident ? '' : `<div class="field tag-field">
     <span>标签（选填，可多选）</span>
     <div class="tag-chips" id="tag-chips"></div>
     <div class="tag-add-row"><input id="tag-input" maxlength="30" placeholder="新增自定义标签，例如：橘猫"><button type="button" class="button outline" data-action="tag-add">添加</button></div>
@@ -1194,7 +1206,7 @@ function showRecord(preselected, mode = 'observation') {
     `}
     <div class="field-pair">
       <label class="field"><span>动物类别</span><select name="category" ${create ? 'required' : ''}>${options([[create ? '' : '待确认',create ? '请选择类别' : '待确认'], ...categoryNames().filter(name => name !== '待确认').map(category => [category,category]),['__custom','新增类别…']])}</select></label>
-      ${incident || create ? `<label class="field"><span>物种（选填）</span><input name="species" maxlength="60" list="species-options" placeholder="选择或输入物种"><datalist id="species-options"></datalist></label>` : ''}
+      ${incident ? `<label class="field"><span>物种（选填）</span><input name="species" maxlength="60" list="species-options" placeholder="选择或输入物种"><datalist id="species-options"></datalist></label>` : ''}
     </div>
     <label class="field" id="custom-category" hidden><span>新类别名称</span><input name="customCategory" maxlength="30" placeholder="例如：松鼠"></label>
     ${tagField}
@@ -1261,17 +1273,17 @@ function updateCategory(form) {
   form.elements.customCategory.required = custom;
   const speciesOptions = form.querySelector('#species-options');
   if (speciesOptions) speciesOptions.innerHTML = options(speciesFor(custom ? form.elements.customCategory.value : categorySelect.value).map(name => [name,name]));
-  formState.category = custom ? (form.elements.customCategory.value.trim() || '__custom') : categorySelect.value;
+  tagsOf(form).category = custom ? (form.elements.customCategory.value.trim() || '__custom') : categorySelect.value;
   renderTagChips(form);
 }
 
 function renderTagChips(form) {
   const container = form.querySelector('#tag-chips');
   if (!container) return;
-  const session = formState;
-  const category = session.category || '';
-  const selected = new Set(session.selectedTags || []);
-  const known = category && category !== '待确认' && category !== '__custom' ? tagPoolFor(category, session.selectedTags || []) : [];
+  const tags = tagsOf(form);
+  const category = tags.category || '';
+  const selected = new Set(tags.selected);
+  const known = category && category !== '待确认' && category !== '__custom' ? tagPoolFor(category, tags.selected) : [];
   container.innerHTML = known.length
     ? known.map(tag => `<button type="button" class="tag-chip" data-action="tag-toggle" data-value="${esc(tag)}" aria-pressed="${selected.has(tag)}">${esc(tag)}</button>`).join('')
     : '<span class="hint">暂无预设标签，可在下方添加自定义标签。</span>';
@@ -1281,15 +1293,21 @@ function renderTagChips(form) {
     : '请先选择动物类别，再选择标签。';
 }
 
+// 每个表单独立保存标签选择（记录表单、修改表单、档案编辑表单各不干扰）。
+function tagsOf(form) {
+  if (!form._tags) form._tags = { selected: [], category: '' };
+  return form._tags;
+}
+
 function toggleTag(form, tag) {
-  const session = formState;
-  const set = new Set(session.selectedTags || []);
+  const tags = tagsOf(form);
+  const set = new Set(tags.selected);
   if (set.has(tag)) set.delete(tag);
   else {
     if (set.size >= 12) return notify('最多选择 12 个标签。');
     set.add(tag);
   }
-  session.selectedTags = [...set];
+  tags.selected = [...set];
   renderTagChips(form);
 }
 
@@ -1297,11 +1315,11 @@ function addTag(form) {
   const input = form.querySelector('#tag-input');
   const value = (input?.value || '').trim().slice(0, 30);
   if (!value) return;
-  const session = formState;
-  const set = new Set(session.selectedTags || []);
+  const tags = tagsOf(form);
+  const set = new Set(tags.selected);
   if (!set.has(value) && set.size >= 12) return notify('最多选择 12 个标签。');
   set.add(value);
-  session.selectedTags = [...set];
+  tags.selected = [...set];
   input.value = '';
   renderTagChips(form);
 }
@@ -1332,7 +1350,7 @@ function showEditVisit(visit) {
   const direct = visit.mine || visit.editable;
   const animal = findAnimal(visit.animal_id);
   const info = findArea(visit.area);
-  formState = { id: randomId(), photo: '', format: 'edit', imageVersion: 0, pending: false, selectedTags: [...(visit.tags || [])], category: visit.category, editId: visit.id };
+  formState = { id: randomId(), photo: '', format: 'edit', imageVersion: 0, pending: false, editId: visit.id };
   const noteRequired = visitFormat(visit) === 'text';
   showDialog(direct ? '修改这条记录' : '申请修改这条记录', `<form class="form" id="record-form" data-mode="edit" data-id="${esc(visit.id)}">
     <p class="hint">仅可修改时间、地点、动物标签、关联的动物档案和观察文字，照片与记录方式不可修改。</p>
@@ -1372,6 +1390,8 @@ function showEditVisit(visit) {
   </form>`, direct ? '修改后立即生效。' : '提交后由管理员审核，通过后生效。');
 
   const form = document.querySelector('#record-form');
+  tagsOf(form).selected = [...(visit.tags || [])];
+  tagsOf(form).category = visit.category;
   const regionId = info.region || 'other';
   form.elements.region.value = regionId;
   updateArea(form);
@@ -1670,7 +1690,7 @@ async function saveObservation(form) {
         id: form.dataset.id,
         observedAt: fields.observedAt ? new Date(fields.observedAt).toISOString() : undefined,
         area,
-        tags: session.selectedTags || [],
+        tags: tagsOf(form).selected,
         note: fields.note,
         match: matchMode,
         animalId: matchMode === 'existing' ? fields.animalId : '',
@@ -1688,7 +1708,7 @@ async function saveObservation(form) {
       observedAt:fields.observedAt ? new Date(fields.observedAt).toISOString() : undefined,
       eventConsent:!!fields.eventConsent, personality:fields.personality, likes:fields.likes,
       mediaConsent:!!fields.mediaConsent, format:fields.format,
-      gender:fields.gender, health:fields.health, tags: session.selectedTags || [],
+      gender:fields.gender, health:fields.health, tags: tagsOf(form).selected,
     };
     let body = record;
     if (session.file) {
@@ -1725,7 +1745,7 @@ async function saveProfile(form) {
   const submit = form.querySelector('button');
   submit.disabled = true;
   try {
-    await api('profile', {id:form.dataset.id, ...Object.fromEntries(new FormData(form))});
+    await api('profile', {id:form.dataset.id, ...Object.fromEntries(new FormData(form)), tags: tagsOf(form).selected});
     await refresh();
     if (form.isConnected) showAnimal(findAnimal(form.dataset.id));
     notify('动物档案已更新。');

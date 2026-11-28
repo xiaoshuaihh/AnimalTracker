@@ -124,7 +124,7 @@ async function payload(request) {
   }
 }
 
-const animalFields = 'id, name, category, species, features, personality, likes, gender, health, photo';
+const animalFields = 'id, name, category, species, features, personality, likes, gender, health, tags, photo';
 const visitFields = 'id, animal_id, category, species, area, kind, note, photo, observed_at, media, media_type, tags';
 
 async function bootstrap(request, env) {
@@ -141,7 +141,8 @@ async function bootstrap(request, env) {
     env.DB.prepare("SELECT observation_id, status FROM observation_edits WHERE requester = ? AND status = 'pending'").bind(viewer),
   ]);
   return json({
-    animals: animals.results, visits: visits.results.map(visit => ({ ...visit, tags: storedTags(visit.tags) })),
+    animals: animals.results.map(animal => ({ ...animal, tags: storedTags(animal.tags) })),
+    visits: visits.results.map(visit => ({ ...visit, tags: storedTags(visit.tags) })),
     bookmarks: bookmarks.results.map(row => row.animal_id).filter(id => (demo && sampleIds.has(id)) || animals.results.some(animal => animal.id === id)),
     edits: edits.results,
     fundraisers: fundraiserCatalog(env),
@@ -204,9 +205,9 @@ async function record(request, env, incident = false) {
   const media = attachment ? '/media/' + mediaId : '';
   const statements = [];
   if (match === 'new') {
-    statements.push(env.DB.prepare(`INSERT INTO animals (${animalFields}, owner) SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE NOT EXISTS (SELECT 1 FROM observations WHERE id = ?) ON CONFLICT(id) DO NOTHING`).bind(
+    statements.push(env.DB.prepare(`INSERT INTO animals (${animalFields}, owner) SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE NOT EXISTS (SELECT 1 FROM observations WHERE id = ?) ON CONFLICT(id) DO NOTHING`).bind(
       id, field(input.name, 40) || '未命名的' + category, category, species, field(input.features, 180),
-      field(input.personality, 140), field(input.likes, 140), field(input.gender, 30), field(input.health, 200), link, viewer, id,
+      field(input.personality, 140), field(input.likes, 140), field(input.gender, 30), field(input.health, 200), JSON.stringify(tags), link, viewer, id,
     ));
   } else if (existing && !sampleIds.has(existing.id) && link) {
     statements.push(env.DB.prepare("UPDATE animals SET photo = ? WHERE id = ? AND photo = '' AND NOT EXISTS (SELECT 1 FROM observations WHERE id = ?)").bind(link, animalId, id));
@@ -248,8 +249,8 @@ async function editProfile(request, env) {
   const id = field(input.id, 60);
   const name = field(input.name, 40);
   if (!name) throw new RequestError(400, '请填写档案名称。');
-  const result = await env.DB.prepare('UPDATE animals SET name = ?, personality = ?, likes = ?, features = ?, gender = ?, health = ?, species = COALESCE(?, species) WHERE id = ? AND (owner = ? OR ? = 1) AND id IN (SELECT id FROM public_animals)')
-    .bind(name, field(input.personality, 140), field(input.likes, 140), field(input.features, 180), field(input.gender, 30), field(input.health, 200), typeof input.species === 'string' ? field(input.species, 60) : null, id, viewer, Number(admin)).run();
+  const result = await env.DB.prepare('UPDATE animals SET name = ?, personality = ?, likes = ?, features = ?, gender = ?, health = ?, tags = ?, species = COALESCE(?, species) WHERE id = ? AND (owner = ? OR ? = 1) AND id IN (SELECT id FROM public_animals)')
+    .bind(name, field(input.personality, 140), field(input.likes, 140), field(input.features, 180), field(input.gender, 30), field(input.health, 200), JSON.stringify(parseTags(input.tags)), typeof input.species === 'string' ? field(input.species, 60) : null, id, viewer, Number(admin)).run();
   if (!result.meta.changes) throw new RequestError(404, '只有档案创建者或管理员可以修改该档案。');
   return json({ id });
 }
@@ -265,9 +266,9 @@ async function createAnimal(request, env) {
   if (photo && input.photoConsent !== true) throw new RequestError(400, '请确认这张照片可公开展示。');
   const photoId = photo ? crypto.randomUUID() : '';
   if (photo) await env.BUCKET.put(photoId, photo, { httpMetadata: { contentType: 'image/jpeg' } });
-  await env.DB.prepare(`INSERT INTO animals (${animalFields}, owner) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).bind(
+  await env.DB.prepare(`INSERT INTO animals (${animalFields}, owner) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).bind(
     id, name, category, field(input.species, 60), field(input.features, 180),
-    field(input.personality, 140), field(input.likes, 140), field(input.gender, 30), field(input.health, 200), photo ? '/media/' + photoId : '', viewer,
+    field(input.personality, 140), field(input.likes, 140), field(input.gender, 30), field(input.health, 200), JSON.stringify(parseTags(input.tags)), photo ? '/media/' + photoId : '', viewer,
   ).run();
   return json({ id }, 201);
 }
@@ -453,9 +454,9 @@ async function applyObservationEdit(env, id, visit, fields) {
     animalId = existing.id;
   } else if (fields.match === 'new') {
     animalId = crypto.randomUUID();
-    await env.DB.prepare(`INSERT INTO animals (${animalFields}, owner) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).bind(
+    await env.DB.prepare(`INSERT INTO animals (${animalFields}, owner) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).bind(
       animalId, fields.name || '未命名的' + visit.category, visit.category, visit.species || '', fields.features,
-      fields.personality, fields.likes, fields.gender, fields.health, '', visit.owner,
+      fields.personality, fields.likes, fields.gender, fields.health, JSON.stringify(fields.tags), '', visit.owner,
     ).run();
   }
   await env.DB.prepare('UPDATE observations SET observed_at = ?, area = ?, note = ?, tags = ?, animal_id = ? WHERE id = ?')
