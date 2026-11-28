@@ -130,6 +130,8 @@ const visitFields = 'id, animal_id, category, species, area, kind, note, photo, 
 async function bootstrap(request, env) {
   const viewer = request.headers.get('oai-authenticated-user-id') || '';
   const admin = viewerRole(request, env) !== 'user';
+  // 示例动物档案与示例观察写在前端 data.js，由服务端开关控制是否下发（WILDLIFE_DEMO_DATA=0 时关闭）。
+  const demo = env.WILDLIFE_DEMO_DATA !== '0';
   const [animals, visits, bookmarks, edits] = await env.DB.batch([
     env.DB.prepare(`SELECT ${animalFields}, (owner = ? OR ? = 1) AS editable FROM public_animals ORDER BY creation_order DESC`).bind(viewer, Number(admin)),
     env.DB.prepare(`SELECT o.id, o.animal_id, o.category, o.species, o.area, o.kind, o.note, o.photo, o.observed_at, o.media, o.media_type, o.tags, (o.owner = ?) AS mine, (o.owner = ? OR ? = 1) AS editable,
@@ -140,10 +142,10 @@ async function bootstrap(request, env) {
   ]);
   return json({
     animals: animals.results, visits: visits.results.map(visit => ({ ...visit, tags: storedTags(visit.tags) })),
-    bookmarks: bookmarks.results.map(row => row.animal_id).filter(id => sampleIds.has(id) || animals.results.some(animal => animal.id === id)),
+    bookmarks: bookmarks.results.map(row => row.animal_id).filter(id => (demo && sampleIds.has(id)) || animals.results.some(animal => animal.id === id)),
     edits: edits.results,
     fundraisers: fundraiserCatalog(env),
-    signedIn: !!viewer, local: !!env.LOCAL_DEMO,
+    signedIn: !!viewer, local: !!env.LOCAL_DEMO, demo,
   });
 }
 

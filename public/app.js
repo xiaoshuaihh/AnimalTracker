@@ -136,9 +136,10 @@ async function api(path, body) {
 async function refresh() {
   try {
     const data = await api('bootstrap');
+    const demo = data.demo !== false;
     Object.assign(state, data, {
-      animals: [...data.animals, ...samples],
-      visits: [...data.visits, ...sampleVisits].sort((a, b) => b.observed_at.localeCompare(a.observed_at)),
+      animals: demo ? [...data.animals, ...samples] : [...data.animals],
+      visits: demo ? [...data.visits, ...sampleVisits].sort((a, b) => b.observed_at.localeCompare(a.observed_at)) : [...data.visits],
       edits: data.edits || [],
       loadError: '',
     });

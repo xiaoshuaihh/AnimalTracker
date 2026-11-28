@@ -34,9 +34,10 @@ The Chinese University of Hong Kong, Shenzhen
    WILDLIFE_HOST=0.0.0.0
    PORT=4173
    EVENT_ADMIN_USERNAMES=你的核心管理员用户名（逗号分隔）
+   WILDLIFE_DEMO_DATA=0
    ```
 
-   其中 `WILDLIFE_HOST=0.0.0.0` 直接对外；更推荐 `127.0.0.1` + Nginx/Caddy 反代 HTTPS（需转发 `Host` 与 `X-Forwarded-Proto` 头）。
+   其中 `WILDLIFE_HOST=0.0.0.0` 直接对外；更推荐 `127.0.0.1` + Nginx/Caddy 反代 HTTPS（需转发 `Host` 与 `X-Forwarded-Proto` 头）。`WILDLIFE_DEMO_DATA=0` 关闭内置的示例动物档案与示例观察（默认 1 开启）。
 3. 前台启动用 `npm start`；生产环境推荐 systemd：参考 `deploy/animaltracker.service` 修改路径与用户名后 `systemctl enable --now animaltracker`。
 4. 升级：先备份数据目录（`wildlife.sqlite*` 与 `images/`），`git pull` 后重启服务，数据库迁移（`migrations/*.sql`）自动按版本号执行，无需手工操作。
 

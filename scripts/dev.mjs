@@ -46,6 +46,7 @@ class Statement {
 }
 const env = {
   EVENT_ADMIN_USERNAMES: process.env.EVENT_ADMIN_USERNAMES,
+  WILDLIFE_DEMO_DATA: process.env.WILDLIFE_DEMO_DATA,
   CAT_FUNDRAISERS_JSON: process.env.CAT_FUNDRAISERS_JSON,
   DB: {
     prepare: query => new Statement(query),
