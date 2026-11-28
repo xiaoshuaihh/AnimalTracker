@@ -22,6 +22,24 @@ The Chinese University of Hong Kong, Shenzhen
 
 当前轮次通过与 Codex 的自然语言对话确定需求和实现，使用 ImageGen 生成示例图片。真实用户反馈及相应改进待试用后补录。
 
+### 自托管部署（Ubuntu）
+
+项目零第三方依赖，服务器仅需 Node.js ≥ 24 即可运行，数据库与图片存放于本地目录，无需 Docker 或外部服务。
+
+1. 安装 Node.js ≥ 24（NodeSource 或 nvm），把仓库放到服务器（如 `/opt/animaltracker`，更新时 `git pull`）。
+2. 创建数据目录（首次启动会自动创建），并配置 `.env`：
+
+   ```
+   WILDLIFE_DATA_DIR=/var/lib/animaltracker
+   WILDLIFE_HOST=0.0.0.0
+   PORT=4173
+   EVENT_ADMIN_USERNAMES=你的核心管理员用户名（逗号分隔）
+   ```
+
+   其中 `WILDLIFE_HOST=0.0.0.0` 直接对外；更推荐 `127.0.0.1` + Nginx/Caddy 反代 HTTPS（需转发 `Host` 与 `X-Forwarded-Proto` 头）。
+3. 前台启动用 `npm start`；生产环境推荐 systemd：参考 `deploy/animaltracker.service` 修改路径与用户名后 `systemctl enable --now animaltracker`。
+4. 升级：先备份数据目录（`wildlife.sqlite*` 与 `images/`），`git pull` 后重启服务，数据库迁移（`migrations/*.sql`）自动按版本号执行，无需手工操作。
+
 ## English
 
 A wildlife observation map for students and staff at The Chinese University of Hong Kong, Shenzhen. Record everyday sightings and incidents such as bird-window and vehicle collisions, browse animal profiles, and build a personal collection.
