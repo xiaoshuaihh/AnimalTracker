@@ -1864,8 +1864,8 @@ document.addEventListener('click', event => {
     case 'admin-role': setUserRole(value, trigger); break;
     case 'visit-edit': showEditVisit(state.visits.find(visit => visit.id === value)); break;
     case 'search': notify('搜索功能即将上线。'); break;
-    case 'tag-toggle': toggleTag(document.querySelector('#record-form'), value); break;
-    case 'tag-add': addTag(document.querySelector('#record-form')); break;
+    case 'tag-toggle': toggleTag(trigger.closest('form'), value); break;
+    case 'tag-add': addTag(trigger.closest('form')); break;
     case 'close': modal.close(); break;
     case 'filter': state.filter = value; state.species = ''; state.area = ''; state.allVisits = false; render(); break;
     case 'new-animal': showRecord('', 'animal'); break;
